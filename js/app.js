@@ -65,6 +65,7 @@ const state = {
   relayKey: null,
   flaggedIdx: [], // 撮影で読んで直した・あやしい文字の場所（確認画面で色を変えて出す）
   pending: null,  // 確認画面に出している { parsed, key }
+  shareImageData: null, // 再発見のとき、画像共有ボタン用の材料（下の shareResultImage）
 };
 
 // ---- 市区町村の表 ----
@@ -472,7 +473,15 @@ function showResult({ key, parsed, denom, noteType, muniCode, rareHits, feature,
     p.appendChild(b);
     p.append(' 旅してきました');
     add('p', 'muted', `このお札を手にした ${outcome.n} 人目`);
+    // 再発見のときだけ、画像で共有するボタンを出す（仕様: お札の絵・記番号は入れない）
+    state.shareImageData = {
+      fromLabel: muniLabel(outcome.prevMuni), toLabel: muniLabel(muniCode),
+      fromLL: muniLatLng(outcome.prevMuni), toLL: here,
+      days: dur, km: outcome.km, n: outcome.n,
+    };
   }
+  if (outcome.first || outcome.comeback) state.shareImageData = null;
+  $('btn-share-image').hidden = !state.shareImageData;
   if (outcome.congested) add('p', 'muted', CONGESTION_TEXT_REGISTER + ' 自分の記録には残しました。');
   else if (outcome.offline) add('p', 'muted', '共有の記録はまだ準備中です（サーバーの設定待ち）。自分の記録には残しました。');
   if (rareHits.length) {
@@ -544,6 +553,99 @@ $('btn-share-result').addEventListener('click', () => {
   WebAppKit.share({ text: `お札を 1 枚、リレーに出した（${muniLabel(entry.muni) || ''}から）#紙幣リレー`, url: APP_URL });
 });
 $('btn-journey').addEventListener('click', () => { if (state.lastResultKey) openJourney(state.lastResultKey); });
+$('btn-share-image').addEventListener('click', () => { if (state.shareImageData) shareResultImage(state.shareImageData); });
+
+// ---- 再発見の画像共有（お札の絵・記番号は入れない） ----
+
+let outlineTextCache = null;
+async function loadOutlineText() {
+  if (outlineTextCache) return outlineTextCache;
+  const res = await fetch('./data/japan.svg');
+  outlineTextCache = await res.text();
+  return outlineTextCache;
+}
+
+/** 2 点を結ぶ小さな地図（SVG）を <img> にして返す。読み込めなければ null */
+async function buildRouteMapImage(fromLL, toLL) {
+  if (!fromLL || !toLL) return null;
+  try {
+    const svgText = await loadOutlineText();
+    const inner = svgText.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
+    const p1 = Geo.project(fromLL.lat, fromLL.lng);
+    const p2 = Geo.project(toLL.lat, toLL.lng);
+    const vb = Map.tightViewBox([fromLL, toLL], 1200);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">`
+      + '<style>path{fill:rgba(138,42,31,0.16);stroke:rgba(42,23,16,0.25);stroke-width:24}</style>'
+      + inner
+      + `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="#b8860b" stroke-width="60" stroke-linecap="round"/>`
+      + `<circle cx="${p1.x}" cy="${p1.y}" r="70" fill="#b8860b"/>`
+      + `<circle cx="${p2.x}" cy="${p2.y}" r="95" fill="#1f6fb2"/>`
+      + '</svg>';
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return img;
+    } finally { URL.revokeObjectURL(url); }
+  } catch { return null; } // 地図は無くても共有画像は作れる
+}
+
+/** 再発見の結果を 1200x630 の画像にする。お札の絵・記番号は描かない */
+async function buildShareCanvas({ fromLabel, toLabel, fromLL, toLL, days, km, n }) {
+  const W = 1200, H = 630;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f4ead8';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#8a2a1f';
+  ctx.fillRect(0, 0, W, 16);
+
+  ctx.fillStyle = '#2a1710';
+  ctx.font = '700 32px sans-serif';
+  ctx.fillText('紙幣リレー', 64, 90);
+
+  ctx.font = '700 48px sans-serif';
+  ctx.fillText(`${fromLabel || '？'} → ${toLabel || '？'}`, 64, 220, 620);
+
+  ctx.font = '700 42px sans-serif';
+  ctx.fillText(`${days}で ${km} km`, 64, 290, 620);
+  ctx.font = '400 34px sans-serif';
+  ctx.fillText('旅してきました', 64, 340, 620);
+
+  ctx.fillStyle = '#7a6152';
+  ctx.font = '400 30px sans-serif';
+  ctx.fillText(`このお札を手にした ${n} 人目`, 64, 400, 620);
+
+  ctx.font = '400 26px sans-serif';
+  ctx.fillText('shihei-relay.t-of.workers.dev ・ #紙幣リレー', 64, H - 48, 900);
+
+  const mapImg = await buildRouteMapImage(fromLL, toLL);
+  if (mapImg) ctx.drawImage(mapImg, 700, 60, 440, 500);
+
+  return canvas;
+}
+
+async function shareResultImage(data) {
+  const text = `${data.fromLabel || ''} → ${data.toLabel || ''}\n${data.days}で ${data.km} km 旅してきました（${data.n} 人目）#紙幣リレー`;
+  if (navigator.canShare) {
+    try {
+      const canvas = await buildShareCanvas(data);
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      if (blob) {
+        const file = new File([blob], 'shihei-relay.png', { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], text, url: APP_URL });
+          return;
+        }
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // キャンセルは何もしない
+    }
+  }
+  WebAppKit.share({ text, url: APP_URL });
+}
 
 // ---- 1 枚の道のり ----
 
