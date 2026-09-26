@@ -344,3 +344,21 @@ test('sumPathKm: 区間の距離をそのまま足す', () => {
 test('sumPathKm: 1 点だけなら 0', () => {
   assert.equal(sumPathKm([{ lat: 0, lng: 0 }]), 0);
 });
+
+// ---- カメラ: 字の塊だけを選ぶ ----
+
+test('pickChars: 高さのそろった字だけ残し、枠に触れる模様・小さな点は捨てる', async () => {
+  const { pickChars } = await import('../js/camera.js');
+  const W = 120, H = 30, black = new Uint8Array(W * H);
+  const rect = (x0, y0, w, h) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) black[y * W + x] = 1; };
+  for (let k = 0; k < 8; k++) rect(10 + k * 12, 8, 6, 14); // 字 8 つ
+  rect(0, 0, 5, 30);   // 上下の端に触れる模様
+  rect(110, 3, 2, 2);  // 小さな点
+  const r = pickChars(black, W, H);
+  assert.ok(r);
+  assert.deepEqual(r.box, { x0: 10, y0: 8, x1: 99, y1: 21 });
+  assert.equal(r.keep(0), false);
+  assert.equal(r.keep(3 * W + 110), false);
+  assert.equal(r.keep(10 * W + 12), true);
+  assert.equal(pickChars(new Uint8Array(W * H), W, H), null);
+});

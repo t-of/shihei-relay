@@ -93,6 +93,85 @@ export function cropAndBinarize(video, box, outCanvas) {
   return outCanvas;
 }
 
+/**
+ * 2 値画像の黒い塊のうち、字の高さ・並びがそろったものだけを選ぶ（DOM に触れない。tools/test.mjs で確かめる）。
+ * お札の地模様のかけらや枠の端で切れた模様を Tesseract が字と取り違え、きれいな画像でも空や
+ * でたらめな結果になっていたため、字でない塊を消してから読ませる。
+ * @param {Uint8Array} black 1 = 黒（W×H）
+ * @returns {{ keep: (i:number) => boolean, box: {x0:number,y0:number,x1:number,y1:number}, charH: number } | null}
+ */
+export function pickChars(black, W, H) {
+  const lab = new Int32Array(W * H);
+  const comps = [];
+  const stack = [];
+  for (let i = 0; i < W * H; i++) {
+    if (!black[i] || lab[i]) continue;
+    const id = comps.length + 1;
+    let x0 = W, y0 = H, x1 = 0, y1 = 0;
+    lab[i] = id; stack.push(i);
+    while (stack.length) {
+      const p = stack.pop(), x = p % W, y = (p - x) / W;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && black[p - 1] && !lab[p - 1]) { lab[p - 1] = id; stack.push(p - 1); }
+      if (x < W - 1 && black[p + 1] && !lab[p + 1]) { lab[p + 1] = id; stack.push(p + 1); }
+      if (y > 0 && black[p - W] && !lab[p - W]) { lab[p - W] = id; stack.push(p - W); }
+      if (y < H - 1 && black[p + W] && !lab[p + W]) { lab[p + W] = id; stack.push(p + W); }
+    }
+    comps.push({ id, x0, y0, x1, y1, h: y1 - y0 + 1, w: x1 - x0 + 1 });
+  }
+  // 字の候補: 枠の上下に触れず、高さが枠の 2〜9 割、横に長すぎない
+  const cand = comps.filter((c) => c.h > H * 0.2 && c.h < H * 0.9 && c.w < c.h * 1.2 && c.y0 > 0 && c.y1 < H - 1);
+  if (cand.length < 6) return null;
+  const median = (a) => a.sort((p, q) => p - q)[a.length >> 1];
+  const charH = median(cand.map((c) => c.h));
+  const midY = median(cand.map((c) => (c.y0 + c.y1) / 2));
+  const kept = cand.filter((c) => Math.abs(c.h - charH) < charH * 0.25 && Math.abs((c.y0 + c.y1) / 2 - midY) < charH * 0.3);
+  if (kept.length < 6) return null; // 記番号は 8〜10 文字。少なすぎたら字が枠に入っていない
+  const ids = new Set(kept.map((c) => c.id));
+  const box = {
+    x0: Math.min(...kept.map((c) => c.x0)), y0: Math.min(...kept.map((c) => c.y0)),
+    x1: Math.max(...kept.map((c) => c.x1)), y1: Math.max(...kept.map((c) => c.y1)),
+  };
+  return { keep: (i) => ids.has(lab[i]), box, charH };
+}
+
+const CHAR_H = 48;
+/**
+ * pickChars で選んだ字だけを白地に描き直し、字の高さを CHAR_H px にそろえて outCanvas に入れる。
+ * Tesseract は字が大きすぎても読めない（映像の 2 倍だと空が返った）。字が見つからなければ false。
+ */
+export function cleanForOcr(srcCanvas, outCanvas) {
+  const W = srcCanvas.width, H = srcCanvas.height;
+  const d = srcCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+  const black = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) black[i] = d[i * 4] < 128 ? 1 : 0;
+  const found = pickChars(black, W, H);
+  if (!found) return false;
+  const { keep, box, charH } = found;
+  const bw = box.x1 - box.x0 + 1, bh = box.y1 - box.y0 + 1;
+  const tmp = document.createElement('canvas');
+  tmp.width = bw; tmp.height = bh;
+  const tctx = tmp.getContext('2d');
+  const img = tctx.createImageData(bw, bh);
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < bw; x++) {
+      const o = (y * bw + x) * 4;
+      const v = keep((y + box.y0) * W + x + box.x0) ? 0 : 255;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = v; img.data[o + 3] = 255;
+    }
+  }
+  tctx.putImageData(img, 0, 0);
+  const s = CHAR_H / charH, pad = 20;
+  outCanvas.width = Math.round(bw * s) + pad * 2;
+  outCanvas.height = Math.round(bh * s) + pad * 2;
+  const ctx = outCanvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(tmp, pad, pad, outCanvas.width - pad * 2, outCanvas.height - pad * 2);
+  return true;
+}
+
 function otsuThreshold(hist, total) {
   let sum = 0;
   for (let i = 0; i < 256; i++) sum += i * hist[i];
@@ -122,13 +201,16 @@ export function startScanLoop({ video, canvas, frame, denom, onProgress, onMatch
   let streak = 0;
   let bestPartial = null;
   const startedAt = Date.now();
+  const work = document.createElement('canvas'); // 切り抜いて白黒にした画像。canvas には字だけにしたものを出す
 
   async function tick() {
     if (stopped) return;
     if (video.readyState < 2 || video.videoWidth === 0) { schedule(); return; }
 
     const box = frameBoxInVideo(video, frame);
-    cropAndBinarize(video, box, canvas);
+    cropAndBinarize(video, box, work);
+    // 字が見つからない間は読まない（地模様をでたらめな文字に読んで、表示がちらつくのを防ぐ）
+    if (!cleanForOcr(work, canvas)) { onTick?.(''); timedOut() || schedule(); return; }
 
     try {
       const w = await ensureWorker(onProgress);
@@ -152,8 +234,13 @@ export function startScanLoop({ video, canvas, frame, denom, onProgress, onMatch
       console.error('recognize failed', e);
     }
 
-    if (Date.now() - startedAt > 20000) { onTimeout?.(bestPartial); return; }
-    schedule();
+    timedOut() || schedule();
+  }
+
+  function timedOut() {
+    if (Date.now() - startedAt <= 20000) return false;
+    onTimeout?.(bestPartial);
+    return true;
   }
 
   function schedule() { if (!stopped) setTimeout(tick, 500); }
