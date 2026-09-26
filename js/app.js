@@ -100,7 +100,9 @@ function renderSerial() {
   const chars = parsed.ok ? [...parsed.prefix, ...parsed.digits, ...parsed.suffix] : [...state.buffer];
   // 形が合っているときだけ、prefix|digits|suffix の切れ目に隙間を入れる
   const gapAfter = parsed.ok ? new Set([parsed.prefix.length - 1, parsed.prefix.length + parsed.digits.length - 1]) : new Set();
-  const max = state.denom === 2000 ? 9 : 10;
+  // 号券が決まったら（形に合ったら）枠の数もその形に合わせる（仕様「4-2」）。
+  // 決まるまでは、いちばん多い E/D 号券の 9 マスぶんだけ空き枠を見せておく（F 号券の 10 個目は打った時点で増える）。
+  const max = parsed.ok ? chars.length : Math.max(chars.length, 9);
   chars.forEach((c, i) => {
     const b = document.createElement('div');
     b.className = 'box filled' + (gapAfter.has(i) ? ' gap-after' : '');
@@ -154,18 +156,11 @@ function keysFor(kind) {
   if (kind === 'either') return [...Bill.ALPHABET, ...'0123456789'];
   return [];
 }
-// 360 幅（安全な余白を引いて約 340px）でも、キーが 44px を割らない列数。
-// 4px の隙間込みで n 列 × 44px 以上 ⇔ n ≤ (340+4)/(44+4) ≈ 7.17 → 最大 6 列にしておく。
-function columnsFor(count) {
-  return count <= 10 ? 5 : 6;
-}
-
 function renderKeypad() {
   const kind = Bill.nextKind(state.buffer, state.denom);
   const keys = keysFor(kind);
   const host = $('keypad');
   host.replaceChildren();
-  host.style.setProperty('--cols', String(columnsFor(keys.length || 5)));
   for (const ch of keys) {
     const b = document.createElement('button');
     b.textContent = ch;

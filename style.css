@@ -29,11 +29,11 @@ a { color: inherit; }
   display: flex;
   flex-direction: column;
   padding:
-    max(10px, env(safe-area-inset-top))
+    max(8px, env(safe-area-inset-top))
     max(10px, env(safe-area-inset-right))
     calc(64px + env(safe-area-inset-bottom))
     max(10px, env(safe-area-inset-left));
-  gap: 8px;
+  gap: 6px;
 }
 
 .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -66,55 +66,62 @@ a { color: inherit; }
   text-align: center;
 }
 
-.view { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.view { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
 
 /* ---- 登録（入力） ---- */
 
-.guide { display: flex; align-items: center; gap: 10px; background: var(--panel); border-radius: 12px; padding: 10px; }
-.guide__steps { margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; flex: 1; }
-.guide__fig { width: 70px; height: 35px; flex-shrink: 0; color: var(--muted); }
+/* 360×640 でスクロールなしに収めるため、1 行に詰める（2 回登録したら畳む） */
+.guide { display: flex; align-items: center; gap: 8px; background: var(--panel); border-radius: 8px; padding: 5px 8px; }
+.guide__steps { margin: 0; font-size: 11px; color: var(--muted); line-height: 1.3; }
+.guide__fig { width: 30px; height: 15px; flex-shrink: 0; color: var(--muted); }
 
 .denoms { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .denoms button {
-  padding: 12px 0;
+  padding: 9px 0;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--panel);
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
+  min-height: 44px;
 }
 .denoms button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
-.serial-row { display: flex; align-items: stretch; gap: 8px; }
+.serial-row { display: flex; align-items: stretch; gap: 6px; }
 .serial-boxes {
   flex: 1;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-content: center;
+  flex-wrap: nowrap;              /* 10 マスでも 1 段に収める（360 幅） */
+  gap: 2px;
+  align-items: center;
+  justify-content: space-between;
   background: var(--panel);
   border-radius: 10px;
-  padding: 8px;
-  min-height: 48px;
+  padding: 6px 4px;
+  min-height: 44px;
+  overflow: hidden;
 }
 .serial-boxes .box {
-  width: 26px; height: 32px;
-  border-radius: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 26px;
+  height: 32px;
+  border-radius: 5px;
   border: 1px solid var(--line);
   display: flex; align-items: center; justify-content: center;
-  font-size: 16px; font-weight: 700;
+  font-size: 13px; font-weight: 700;
   font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
 }
 .serial-boxes .box.filled { border-color: rgba(255, 211, 92, 0.5); }
-.serial-boxes .box.gap-after { margin-right: 6px; }
+.serial-boxes .box.gap-after { margin-right: 3px; }
 .serial-boxes .box.suspicious { border-color: var(--danger); color: var(--danger); }
 .cam-btn {
-  width: 48px;
+  width: 44px;
   border-radius: 10px;
   background: var(--accent);
   color: var(--accent-fg);
-  font-size: 20px;
+  font-size: 18px;
   cursor: pointer;
 }
 
@@ -128,44 +135,47 @@ a { color: inherit; }
 
 .place-line {
   text-align: left;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--line);
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
+  min-height: 40px;
 }
 
 .register-btn {
-  padding: 14px;
+  padding: 11px;
   border-radius: 12px;
   background: var(--accent);
   color: var(--accent-fg);
   font-weight: 700;
-  font-size: 16px;
+  font-size: 15px;
   cursor: pointer;
+  min-height: 44px;
 }
 .register-btn:disabled { opacity: 0.35; cursor: default; }
 
-/* 列数は js/app.js が --cols に設定する（いまの位置で打てる文字だけを出すので、数が減った分だけ大きくなる） */
-.keypad { display: grid; grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr)); gap: 4px; }
+/* 列は固定 7 列（360 幅・4px の隙間で 1 列 約45px、44px を割らない）。
+   高さは幅に連動する aspect-ratio をやめ 44px 固定にする（前は span 2 の「消す」だけ縦に 2 倍伸びていた）。
+   「消す」も他のキーと同じ 1 マスにして、行数が増えないようにする。 */
+.keypad { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-auto-rows: 44px; gap: 4px; }
 .keypad button {
   min-width: 0;  /* グリッド項目の既定の自動最小幅（内容ぶん）を外し、1fr どおりに縮む */
-  min-height: 44px;
-  aspect-ratio: 1 / 1.05;
+  height: 44px;
   border-radius: 8px;
   background: var(--panel);
   border: 1px solid var(--line);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
   padding: 0;
 }
 .keypad button:disabled { opacity: 0.3; }
-.keypad button.key--del { grid-column: span 2; background: rgba(255, 138, 138, 0.12); font-size: 13px; }
+.keypad button.key--del { background: rgba(255, 138, 138, 0.12); font-size: 11px; }
 
-.note { margin: 0; text-align: center; font-size: 11px; color: var(--muted); }
+.note { margin: 0; text-align: center; font-size: 10px; color: var(--muted); }
 
 /* ---- 自分の記録・みんな ---- */
 

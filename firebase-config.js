@@ -6,7 +6,14 @@
 //
 // null のままなら、登録・道のり・みんなの画面は「準備中」を出し、それ以外
 // （キーパッド・カメラでの読み取り・レア番号の判定・自分の記録の端末内の部分）は今までどおり動く。
-window.SHIHEI_FIREBASE_CONFIG = null;
+window.SHIHEI_FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyACTCnsBOjgUsbmJ8_-uotTuhdf3et7W3s',
+  authDomain: 'tof-shihei-relay.firebaseapp.com',
+  projectId: 'tof-shihei-relay',
+  storageBucket: 'tof-shihei-relay.firebasestorage.app',
+  messagingSenderId: '14511379370',
+  appId: '1:14511379370:web:87e6e887a3bb66dd9751d3',
+};
 
 // 例:
 // window.SHIHEI_FIREBASE_CONFIG = {
