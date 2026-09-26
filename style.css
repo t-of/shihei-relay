@@ -147,20 +147,23 @@ a { color: inherit; }
 }
 .register-btn:disabled { opacity: 0.35; cursor: default; }
 
-.keypad { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
+/* 列数は js/app.js が --cols に設定する（いまの位置で打てる文字だけを出すので、数が減った分だけ大きくなる） */
+.keypad { display: grid; grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr)); gap: 4px; }
 .keypad button {
   min-width: 0;  /* グリッド項目の既定の自動最小幅（内容ぶん）を外し、1fr どおりに縮む */
+  min-height: 44px;
   aspect-ratio: 1 / 1.05;
   border-radius: 8px;
   background: var(--panel);
   border: 1px solid var(--line);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
   padding: 0;
 }
-.keypad button.key--del { grid-column: span 2; background: rgba(255, 138, 138, 0.12); }
+.keypad button:disabled { opacity: 0.3; }
+.keypad button.key--del { grid-column: span 2; background: rgba(255, 138, 138, 0.12); font-size: 13px; }
 
 .note { margin: 0; text-align: center; font-size: 11px; color: var(--muted); }
 

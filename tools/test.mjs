@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseSerial, seriesFor, colorsFor, buildKey, normalize,
+  parseSerial, seriesFor, colorsFor, buildKey, normalize, nextKind,
   correctDigit, extractSerialCandidate, rareChecks, smallFeature,
   distanceKm, formatDuration, isMuniCode,
 } from '../js/bill.js';
@@ -59,6 +59,36 @@ test('桁数・並びが違う入力は落とす（20 ほどのだめな例）',
   for (const s of ['AB12345CD', 'AB1234567CD', 'ABC123456CD', 'AB123456CDE', '123456AB', 'AB123456', '']) {
     assert.equal(parseSerial(s, 10000).ok, false, s);
   }
+});
+
+// ---- キーパッドの「次に来る文字」の出し分け ----
+
+test('次に来る文字: 最初は英字だけ', () => {
+  assert.equal(nextKind('', 10000), 'letter');
+});
+test('次に来る文字: 2 文字目は号券が決まらないので両方', () => {
+  assert.equal(nextKind('A', 10000), 'either');
+});
+test('次に来る文字: 頭の英字が 2 文字そろったら次は数字', () => {
+  assert.equal(nextKind('AB', 10000), 'digit');
+});
+test('次に来る文字: 頭が 1 文字（数字が始まった）ら、6 桁そろうまで数字', () => {
+  assert.equal(nextKind('A1', 10000), 'digit');
+  assert.equal(nextKind('A12345', 10000), 'digit');
+});
+test('次に来る文字: 数字 6 桁そろったら英字（末尾の 1 文字目）', () => {
+  assert.equal(nextKind('AB123456', 10000), 'letter');
+  assert.equal(nextKind('A123456', 10000), 'letter');
+});
+test('次に来る文字: 末尾 2 文字目は F 号券の形（頭 2 文字）のときだけ', () => {
+  assert.equal(nextKind('AB123456C', 10000), 'letter'); // 頭 2 文字 → まだ F の可能性がある
+  assert.equal(nextKind('A123456B', 10000), null);       // 頭 1 文字 → E 号券で完成、これ以上打てない
+});
+test('次に来る文字: 2 千円は D 号券だけなので末尾は常に 1 文字', () => {
+  assert.equal(nextKind('AB123456C', 2000), null);
+});
+test('次に来る文字: 形が完成したら null', () => {
+  assert.equal(nextKind('AB123456CD', 10000), null);
 });
 
 test('号券の自動判定: 末尾 2 文字→F、1 文字→E', () => {

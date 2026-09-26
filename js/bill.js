@@ -81,6 +81,40 @@ export function parseSerial(raw, denom) {
   return { ok: false, reason: '記番号の形に合いません' };
 }
 
+/**
+ * いまの位置（buffer の続き）で次に打てるのは英字か数字かを返す。
+ * キーパッド側はこれを見て、その位置で入りうる文字だけを大きく出す（仕様「4-2」）。
+ *
+ * 記番号は「英字 1〜2 + 数字 6 + 英字 1〜2」の並び（F 号券だけ両端 2 文字、2 千円は末尾 1 文字だけ）。
+ * 先頭は必ず英字。2 文字目は、英字の続き（頭 2 文字＝F 号券の形）か、もう数字が始まる（頭 1 文字）か
+ * まだ決まらないので両方を返す。数字が 6 桁そろったら次は英字、そこから先は号券が決まっているかどうかで
+ * もう 1 文字打てるかが決まる。
+ * @returns {'letter' | 'digit' | 'either' | null} null は、これ以上打っても形に合わないとき
+ */
+export function nextKind(buffer, denom) {
+  const s = normalize(buffer);
+  const n = s.length;
+  if (n === 0) return 'letter';
+
+  const firstDigitIdx = [...s].findIndex((c) => /[0-9]/.test(c));
+  if (firstDigitIdx === -1) {
+    // まだ数字が出てきていない＝頭の英字の途中
+    if (n === 1) return 'either'; // 頭が 1 文字（もう数字が始まる）か 2 文字（もう 1 英字）か、まだ決まらない
+    return 'digit'; // 頭の英字は 2 文字まで。次は数字の始まり
+  }
+
+  const prefixLen = firstDigitIdx;
+  const digitsTyped = n - prefixLen;
+  if (digitsTyped < 6) return 'digit';
+  if (digitsTyped === 6) return 'letter'; // 末尾の英字 1 文字目
+  if (digitsTyped === 7) {
+    // 2 文字目の英字が打てるのは F 号券の形（頭 2 文字・末尾 2 文字）のときだけ。
+    // 2 千円は D 号券だけなので末尾は常に 1 文字。
+    return denom !== 2000 && prefixLen === 2 ? 'letter' : null;
+  }
+  return null; // もう形は完成している
+}
+
 /** お札の鍵を組み立てる。例: F10000K-AB123456CD */
 export function buildKey({ series, denom, color, serial }) {
   return `${series}${denom}${color}-${serial}`;

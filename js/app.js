@@ -115,6 +115,7 @@ function renderSerial() {
   }
   renderColors(parsed);
   renderRegister(parsed);
+  renderKeypad();
 }
 
 function renderColors(parsedArg) {
@@ -145,33 +146,48 @@ function renderRegister(parsedArg) {
   $('serial-boxes').dataset.wasOk = parsed.ok ? '1' : '';
 }
 
-const KEY_ROWS = [
-  [...Bill.ALPHABET],
-  [...'0123456789'],
-];
+// キーパッドは「いまの位置で打てる文字」（js/bill.js の nextKind）だけを大きく出す。
+// お札の旅にない、いちばんの入力の速さの決め手（仕様「4-2」の 1）。
+function keysFor(kind) {
+  if (kind === 'letter') return [...Bill.ALPHABET];
+  if (kind === 'digit') return [...'0123456789'];
+  if (kind === 'either') return [...Bill.ALPHABET, ...'0123456789'];
+  return [];
+}
+// 360 幅（安全な余白を引いて約 340px）でも、キーが 44px を割らない列数。
+// 4px の隙間込みで n 列 × 44px 以上 ⇔ n ≤ (340+4)/(44+4) ≈ 7.17 → 最大 6 列にしておく。
+function columnsFor(count) {
+  return count <= 10 ? 5 : 6;
+}
+
 function renderKeypad() {
+  const kind = Bill.nextKind(state.buffer, state.denom);
+  const keys = keysFor(kind);
   const host = $('keypad');
   host.replaceChildren();
-  for (const row of KEY_ROWS) {
-    for (const ch of row) {
-      const b = document.createElement('button');
-      b.textContent = ch;
-      b.addEventListener('click', () => typeChar(ch));
-      host.appendChild(b);
-    }
+  host.style.setProperty('--cols', String(columnsFor(keys.length || 5)));
+  for (const ch of keys) {
+    const b = document.createElement('button');
+    b.textContent = ch;
+    b.addEventListener('click', () => typeChar(ch));
+    host.appendChild(b);
   }
   const del = document.createElement('button');
   del.textContent = '消す';
   del.className = 'key--del';
+  del.disabled = state.buffer.length === 0;
   del.addEventListener('click', () => { state.buffer = state.buffer.slice(0, -1); sfx.key(false); renderSerial(); });
   host.appendChild(del);
 }
 
 function typeChar(ch) {
-  const max = state.denom === 2000 ? 9 : 10;
-  if (state.buffer.length >= max) return;
+  const kind = Bill.nextKind(state.buffer, state.denom);
+  const isLetter = Bill.ALPHABET.includes(ch);
+  const isDigit = /[0-9]/.test(ch);
+  const allowed = (kind === 'letter' && isLetter) || (kind === 'digit' && isDigit) || (kind === 'either' && (isLetter || isDigit));
+  if (!allowed) return;
   state.buffer += ch;
-  sfx.key(/[A-Z]/.test(ch));
+  sfx.key(isLetter);
   renderSerial();
 }
 
@@ -294,30 +310,34 @@ function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }
   state.lastResultKey = key;
   const body = $('result-body');
   const here = muniLatLng(muniCode);
-  let html = '';
+  body.replaceChildren();
+  const add = (tag, cls, text) => { const e = el(tag, cls, text); body.appendChild(e); return e; };
+
   if (outcome.first) {
     sfx.firstRegister();
-    html += `<h2>登録しました</h2><p>ここから旅が始まります — ${muniLabel(muniCode)}</p>`;
+    add('h2', null, '登録しました');
+    add('p', null, `ここから旅が始まります — ${muniLabel(muniCode)}`);
   } else {
     sfx.rediscoverArrive();
     const dur = Bill.formatDuration(Date.now() - outcome.prevAt);
-    html += `<h2>再発見！</h2><p>${muniLabel(outcome.prevMuni)} → ${muniLabel(muniCode)}</p>`;
-    html += `<p><b>${dur}で ${outcome.km} km</b> 旅してきました</p>`;
-    html += `<p class="muted">このお札を手にした ${outcome.n} 人目</p>`;
+    add('h2', null, '再発見！');
+    add('p', null, `${muniLabel(outcome.prevMuni)} → ${muniLabel(muniCode)}`);
+    const b = document.createElement('b');
+    b.textContent = `${dur}で ${outcome.km} km`;
+    const p = add('p', null, null);
+    p.appendChild(b);
+    p.append(' 旅してきました');
+    add('p', 'muted', `このお札を手にした ${outcome.n} 人目`);
   }
-  if (outcome.offline) html += `<p class="muted">共有の記録はまだ準備中です（サーバーの設定待ち）。自分の記録には残しました。</p>`;
+  if (outcome.offline) add('p', 'muted', '共有の記録はまだ準備中です（サーバーの設定待ち）。自分の記録には残しました。');
   if (rareHits.length) {
     sfx.rare();
-    html += rareHits.map((r) => `<p class="rare-hit">✨ ${r.name}（${r.odds}）</p>`).join('');
+    for (const r of rareHits) add('p', 'rare-hit', `✨ ${r.name}（${r.odds}）`);
     if (rareHits.some((r) => !dex.found[r.id])) sfx.dexComplete();
   } else if (feature) {
-    html += `<p class="muted">${feature}</p>`;
+    add('p', 'muted', feature);
   }
-  html += `<p class="muted">${formatSerial(parsed)}（${DENOM_LABEL[denom]}）</p>`;
-  body.innerHTML = ''; // 直前の内容を消してから安全な API で組み立てる
-  const wrap = document.createElement('div');
-  wrap.innerHTML = html; // ここに入る文字列はすべてこちらが作った定型文と市区町村名（表由来）で、外部入力はない
-  body.appendChild(wrap);
+  add('p', 'muted', `${formatSerial(parsed)}（${DENOM_LABEL[denom]}）`);
 
   if (here) {
     const mapHost = document.createElement('div');
@@ -382,11 +402,19 @@ async function openJourney(key) {
   const listHost = $('journey-list');
   listHost.replaceChildren();
   rows.forEach((r, i) => {
+    // r は Firestore から来た値（fetchJourney）なので、textContent で入れる（innerHTML に入れない）。
     const row = document.createElement('div');
     row.className = 'journey-row';
     const when = new Date(r.at).toLocaleString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const dist = i > 0 ? `<span class="muted">前から ${Bill.distanceKm(rows[i - 1].ll.lat, rows[i - 1].ll.lng, r.ll.lat, r.ll.lng)} km</span>` : '';
-    row.innerHTML = `<span>${when} ・ ${muniLabel(r.muni) || ''}</span>${dist}`;
+    const left = document.createElement('span');
+    left.textContent = `${when} ・ ${muniLabel(r.muni) || ''}`;
+    row.appendChild(left);
+    if (i > 0) {
+      const right = document.createElement('span');
+      right.className = 'muted';
+      right.textContent = `前から ${Bill.distanceKm(rows[i - 1].ll.lat, rows[i - 1].ll.lng, r.ll.lat, r.ll.lng)} km`;
+      row.appendChild(right);
+    }
     listHost.appendChild(row);
   });
 }
@@ -499,9 +527,11 @@ function renderMine() {
   const rediscovered = mine.bills.filter((b) => (b.seen || 1) > 1).length;
   const totalKm = mine.bills.reduce((s, b) => s + (b.km || 0), 0);
   const muniCount = new Set(mine.bills.map((b) => b.muni)).size;
-  $('mine-summary').innerHTML = [
+  const summaryHost = $('mine-summary');
+  summaryHost.replaceChildren();
+  for (const [label, val] of [
     ['登録', `${total} 枚`], ['再発見', `${rediscovered} 枚`], ['旅した合計', `${totalKm} km`], ['登録した市区町村', `${muniCount}`],
-  ].map(([label, val]) => `<div class="card"><b>${escapeHtml(val)}</b><span>${escapeHtml(label)}</span></div>`).join('');
+  ]) summaryHost.appendChild(statCard(label, val));
 
   Map.mountMap($('mine-map')).then((svg) => {
     const seen = new Set();
@@ -517,10 +547,7 @@ function renderMine() {
   dexHost.replaceChildren();
   const NAMES = { zorome: 'ゾロ目', kiriban: 'キリ番', wakai: '若い番号', kaidan: '階段', kagami: '鏡', kurikaeshi: 'くり返し', zorozoro: 'ぞろぞろ', eiji: '英字もそろう' };
   for (const id of Bill.RARE_IDS) {
-    const el = document.createElement('div');
-    el.className = `slot ${dex.found[id] ? 'got' : 'pending'}`;
-    el.textContent = NAMES[id] || id;
-    dexHost.appendChild(el);
+    dexHost.appendChild(el('div', `slot ${dex.found[id] ? 'got' : 'pending'}`, NAMES[id] || id));
   }
 
   const sort = $('mine-sort').value;
@@ -528,45 +555,57 @@ function renderMine() {
   const listHost = $('mine-list');
   listHost.replaceChildren();
   for (const b of sorted) {
-    const row = document.createElement('div');
-    row.className = 'bill-row';
-    row.innerHTML = `<span>${escapeHtml(muniLabel(b.muni) || '')}</span><span class="muted">${b.km || 0} km</span>`;
+    const row = el('div', 'bill-row');
+    row.appendChild(el('span', null, muniLabel(b.muni) || ''));
+    row.appendChild(el('span', 'muted', `${b.km || 0} km`));
     row.addEventListener('click', () => openJourney(b.key));
     listHost.appendChild(row);
   }
 }
 $('mine-sort').addEventListener('change', renderMine);
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// 外から来た文字（Firestore の値など）を innerHTML に入れないための小さな組み立て。
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function statCard(label, val) {
+  const card = el('div', 'card');
+  card.appendChild(el('b', null, val));
+  card.appendChild(el('span', null, label));
+  return card;
 }
 
 // ---- みんな ----
 
 async function renderEveryone() {
+  const statsHost = $('global-stats');
   if (!FB.isConfigured()) {
-    $('global-stats').innerHTML = '<div class="card"><span>準備中です（サーバーの設定待ち）</span></div>';
+    statsHost.replaceChildren(el('div', 'card', null));
+    statsHost.firstChild.appendChild(el('span', null, '準備中です（サーバーの設定待ち）'));
     $('hit-list').replaceChildren();
     return;
   }
+  // stats.hitCount・longestKm、hits.rows の中身（h.from・h.to・h.km・h.mins）はすべて Firestore から来た値。
+  // innerHTML に入れず、textContent で入れる（RULES.md §1 の推奨）。
   const [stats, hits] = await Promise.all([FB.fetchGlobalStats(), FB.fetchRecentHits(20)]);
   if (stats.ok) {
-    $('global-stats').innerHTML = [['再発見', `${stats.hitCount} 件`], ['最長の旅', `${stats.longestKm} km`]]
-      .map(([label, val]) => `<div class="card"><b>${escapeHtml(val)}</b><span>${escapeHtml(label)}</span></div>`).join('');
+    statsHost.replaceChildren();
+    statsHost.appendChild(statCard('再発見', `${stats.hitCount} 件`));
+    statsHost.appendChild(statCard('最長の旅', `${stats.longestKm} km`));
   }
   const listHost = $('hit-list');
   listHost.replaceChildren();
   if (!hits.ok || hits.rows.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = 'まだ再発見はありません。リレーのリンクで最初の 1 本をつなごう';
-    listHost.appendChild(p);
+    listHost.appendChild(el('p', 'muted', 'まだ再発見はありません。リレーのリンクで最初の 1 本をつなごう'));
     return;
   }
   for (const h of hits.rows) {
-    const row = document.createElement('div');
-    row.className = 'hit-row';
-    row.innerHTML = `<span>${escapeHtml(muniLabel(h.from) || '')} → ${escapeHtml(muniLabel(h.to) || '')}</span><span class="muted">${h.km} km・${Bill.formatDuration(h.mins * 60000)}</span>`;
+    const row = el('div', 'hit-row');
+    row.appendChild(el('span', null, `${muniLabel(h.from) || ''} → ${muniLabel(h.to) || ''}`));
+    row.appendChild(el('span', 'muted', `${h.km} km・${Bill.formatDuration(h.mins * 60000)}`));
     listHost.appendChild(row);
   }
 }
@@ -644,7 +683,6 @@ $('guide').hidden = settings.guided >= 2;
 // ---- 初期化 ----
 
 renderDenoms();
-renderKeypad();
-renderSerial();
+renderSerial(); // renderKeypad も内部で呼ぶ
 renderPlace();
 tryRelayLink();
