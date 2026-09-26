@@ -70,7 +70,7 @@ function muniLatLng(code) {
 
 // ---- 券種ボタン ----
 
-const DENOM_LABEL = { 1000: '千円', 2000: '2千円', 5000: '5千円', 10000: '1万円' };
+const DENOM_LABEL = { 1000: '千円', 2000: '二千円', 5000: '五千円', 10000: '一万円' };
 function renderDenoms() {
   const host = $('denoms');
   host.replaceChildren();
