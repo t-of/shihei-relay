@@ -882,8 +882,8 @@ function statCard(label, val) {
 const SPREAD_THRESHOLD = 5;
 
 // 上限（resource-exhausted）や network の失敗のときの案内。permission-denied（形の不正など）は含めない。
-const CONGESTION_TEXT_REGISTER = '今日は登録が混み合っていて、みんなとの照合を止めています。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
-const CONGESTION_TEXT_VIEW = '今日はアクセスが混み合っていて、みんなの画面を止めています。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
+const CONGESTION_TEXT_REGISTER = '登録が混み合っているか、通信がつながらないため、みんなとの照合ができませんでした。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
+const CONGESTION_TEXT_VIEW = 'アクセスが混み合っているか、通信がつながらないため、みんなの画面を出せません。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
 const isCongested = (res) => !res.ok && res.reason !== 'permission-denied';
 
 // 「みんな」タブは開くたびに読み取りが多い（再発見数・最長の旅・最近 20 件で約 22 回）ので、
