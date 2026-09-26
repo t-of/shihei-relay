@@ -79,14 +79,23 @@
       <div class="summary" id="mine-summary"></div>
       <div class="map-host" id="mine-map"></div>
       <div class="dex" id="mine-dex"></div>
-      <div class="sort-row">
-        <select id="mine-sort">
-          <option value="new">新しい順</option>
-          <option value="far">距離の長い順</option>
-          <option value="denom">券種</option>
-        </select>
+      <p class="note" id="mine-empty" hidden>まだ登録したお札はありません</p>
+      <button class="ghost" id="btn-mine-empty-register" hidden>登録する</button>
+      <button class="record-toggle" id="btn-mine-toggle" aria-expanded="false" hidden>記録を見る ›</button>
+      <div class="mine-records" id="mine-records" hidden>
+        <div class="filter-row" id="mine-filter" role="group" aria-label="しぼり込み"></div>
+        <div class="sort-row">
+          <select id="mine-sort">
+            <option value="new">新しい順</option>
+            <option value="old">古い順</option>
+            <option value="num">番号順</option>
+            <option value="rare">レア順</option>
+            <option value="far">距離の長い順</option>
+          </select>
+        </div>
+        <div class="bill-groups" id="mine-groups"></div>
+        <p class="note">記番号はこの端末の中だけに保存しています</p>
       </div>
-      <div class="bill-list" id="mine-list"></div>
     </section>
 
     <!-- ============ みんな ============ -->
@@ -118,6 +127,17 @@
     <div class="cam-denoms" id="cam-denoms"></div>
     <input type="file" id="cam-file" accept="image/*" capture="environment" hidden>
     <button class="cam-close" id="btn-cam-close" aria-label="閉じる">✕</button>
+  </div>
+
+  <!-- ============ 昔のお札(もっと見る) ============ -->
+  <div class="sheet" id="old-sheet" hidden>
+    <div class="sheet__body">
+      <h2>昔のお札</h2>
+      <p class="confirm-note">今は作られていませんが、今もお札として使えます。自動販売機や ATM では使えないことがあります</p>
+      <div class="old-list" id="old-list"></div>
+      <p class="confirm-note">もっと古いお札（1946 年ごろの百円札など）は、まだ選べません</p>
+      <button class="sheet__close" id="btn-old-close">閉じる</button>
+    </div>
   </div>
 
   <!-- ============ 場所を選ぶ ============ -->

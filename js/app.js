@@ -22,10 +22,17 @@ function save(key, value) {
 }
 
 // confirm（登録前の確かめのスキップ）は廃止（確かめは必ず出す）。古いデータに残っていても読み捨てる。
+// listSort・listFilter・lastNoteType は「18」「19」で足した項目。無いときの初期値はここで入るので、
+// 古いデータもそのまま引き継げる（キーは変えていない）。
+const SORTS = new Set(['new', 'old', 'num', 'rare', 'far']);
+const FILTERS = new Set(['all', 'fav', 'rare']);
 const settings = Object.assign(
-  { v: 1, sound: true, input: 'pad', lastDenom: null, lastMuni: null, guided: 0 },
+  { v: 1, sound: true, input: 'pad', lastDenom: null, lastMuni: null, guided: 0, listSort: 'new', listFilter: 'all', lastNoteType: null },
   load('settings', {}),
 );
+if (!SORTS.has(settings.listSort)) settings.listSort = 'new';
+if (!FILTERS.has(settings.listFilter)) settings.listFilter = 'all';
+if (!Bill.NOTE_TYPES.some((t) => t.old && t.id === settings.lastNoteType)) settings.lastNoteType = null;
 const mine = Object.assign({ v: 1, bills: [] }, load('mine', {}));
 const dex = Object.assign({ v: 1, found: {} }, load('dex', {}));
 const saveSettings = () => save('settings', settings);
@@ -48,6 +55,7 @@ function spreadShare() { WebAppKit.share({ text: SPREAD_TEXT, url: APP_URL }); }
 let muniList = [];
 const state = {
   denom: settings.lastDenom,
+  noteType: settings.lastNoteType, // 昔のお札を選んでいるとき NOTE_TYPES の id。それ以外は null
   buffer: '',
   color: null,
   muniCode: settings.lastMuni,
@@ -77,28 +85,81 @@ function muniLatLng(code) {
 
 // ---- 券種ボタン ----
 
-const DENOM_LABEL = { 1000: '千円', 2000: '二千円', 5000: '五千円', 10000: '一万円' };
+const DENOM_LABEL = { 50: '五十円', 100: '百円', 500: '五百円', 1000: '千円', 2000: '二千円', 5000: '五千円', 10000: '一万円' };
+const COLOR_CSS = { K: '#222', B: '#7a4a20', N: '#1a2a5e', U: '#1f4fa8', G: '#1f5c3a' };
+
+/** 券種の表示名。昔のお札を選んでいるときは「千円（昔・夏目漱石）」のように肖像も添える（仕様「19-2」） */
+function denomLabel(denom, noteTypeId) {
+  const row = noteTypeId && Bill.NOTE_TYPES.find((t) => t.id === noteTypeId);
+  return row ? `${DENOM_LABEL[row.denom]}（${row.short}）` : DENOM_LABEL[denom];
+}
+
 function renderDenoms() {
   const host = $('denoms');
   host.replaceChildren();
   for (const d of Bill.DENOMS) {
     const b = document.createElement('button');
     b.textContent = DENOM_LABEL[d];
-    b.setAttribute('aria-pressed', String(d === state.denom));
+    b.setAttribute('aria-pressed', String(!state.noteType && d === state.denom));
     b.addEventListener('click', () => {
       state.denom = d;
+      state.noteType = null;
       state.color = null;
-      settings.lastDenom = d; saveSettings();
+      state.buffer = '';
+      settings.lastDenom = d; settings.lastNoteType = null; saveSettings();
       sfx.choice();
       renderDenoms(); renderColors(); renderSerial();
     });
     host.appendChild(b);
   }
+  const oldRow = state.noteType && Bill.NOTE_TYPES.find((t) => t.id === state.noteType);
+  const more = document.createElement('button');
+  more.className = 'denom-more';
+  more.textContent = oldRow ? oldRow.short : 'もっと見る';
+  more.setAttribute('aria-pressed', String(!!oldRow));
+  more.addEventListener('click', openOldSheet);
+  host.appendChild(more);
 }
+
+// ---- 昔のお札（仕様「19」） ----
+
+function selectOldNote(row) {
+  state.denom = row.denom;
+  state.noteType = row.id;
+  state.color = null;
+  state.buffer = '';
+  settings.lastDenom = row.denom; settings.lastNoteType = row.id; saveSettings();
+  $('old-sheet').hidden = true;
+  sfx.choice();
+  renderDenoms(); renderColors(); renderSerial();
+}
+
+function openOldSheet() {
+  const host = $('old-list');
+  host.replaceChildren();
+  const groups = [10000, 5000, 1000, 500, 100, 50];
+  for (const d of groups) {
+    const rows = Bill.NOTE_TYPES.filter((t) => t.old && t.denom === d);
+    if (!rows.length) continue;
+    host.appendChild(el('h3', 'old-group', DENOM_LABEL[d]));
+    for (const row of rows) {
+      const b = document.createElement('button');
+      b.className = 'old-item';
+      b.textContent = `${row.portrait}　${row.from} 年から`;
+      b.addEventListener('click', () => selectOldNote(row));
+      host.appendChild(b);
+      if (row.id === 'D10000') {
+        host.appendChild(el('p', 'old-note', '今の福沢諭吉の一万円札（2004 年から）と違い、ホログラム（表の左下の光る部分）がないもの'));
+      }
+    }
+  }
+  $('old-sheet').hidden = false;
+}
+$('btn-old-close').addEventListener('click', () => { $('old-sheet').hidden = true; });
 
 // ---- 記番号の枠・キーパッド ----
 
-function currentParse() { return Bill.parseSerial(state.buffer, state.denom); }
+function currentParse() { return Bill.parseSerial(state.buffer, state.denom, state.noteType); }
 
 function renderSerial() {
   const parsed = state.denom ? currentParse() : { ok: false };
@@ -135,7 +196,6 @@ function renderColors(parsedArg) {
   if (cs.length <= 1) { state.color = cs[0] || null; host.hidden = true; return; }
   host.hidden = false;
   host.replaceChildren();
-  const COLOR_CSS = { K: '#222', B: '#7a4a20', N: '#1a2a5e' };
   for (const c of cs) {
     const b = document.createElement('button');
     b.style.background = COLOR_CSS[c];
@@ -164,7 +224,7 @@ function keysFor(kind) {
   return [];
 }
 function renderKeypad() {
-  const kind = Bill.nextKind(state.buffer, state.denom);
+  const kind = Bill.nextKind(state.buffer, state.denom, state.noteType);
   const keys = keysFor(kind);
   const host = $('keypad');
   host.replaceChildren();
@@ -183,7 +243,7 @@ function renderKeypad() {
 }
 
 function typeChar(ch) {
-  const kind = Bill.nextKind(state.buffer, state.denom);
+  const kind = Bill.nextKind(state.buffer, state.denom, state.noteType);
   const isLetter = Bill.ALPHABET.includes(ch);
   const isDigit = /[0-9]/.test(ch);
   const allowed = (kind === 'letter' && isLetter) || (kind === 'digit' && isDigit) || (kind === 'either' && (isLetter || isDigit));
@@ -269,7 +329,7 @@ function openConfirmSheet(parsed) {
   });
 
   const colorText = state.color && Bill.COLOR_NAME[state.color] ? `・${Bill.COLOR_NAME[state.color]}` : '';
-  $('confirm-meta').textContent = `${DENOM_LABEL[state.denom]}${colorText}・${muniLabel(state.muniCode)}`;
+  $('confirm-meta').textContent = `${denomLabel(state.denom, state.noteType)}${colorText}・${muniLabel(state.muniCode)}`;
 
   const prior = mine.bills.find((b) => b.key === key);
   const priorHost = $('confirm-prior');
@@ -325,12 +385,15 @@ function finishRegister(parsed, key, outcome) {
   const newRare = rareHits.filter((r) => !dex.found[r.id]);
   for (const r of rareHits) if (!dex.found[r.id]) dex.found[r.id] = Date.now();
   if (outcome.comeback && !dex.found.kaiki) dex.found.kaiki = Date.now();
-  if (newRare.length || outcome.comeback) saveDex();
+  // 昔のお札の図鑑の枠（仕様「19-7」）: 初めて登録したときだけ埋まる
+  const oldFirst = !!state.noteType && !dex.found.mukashi;
+  if (oldFirst) { dex.found.mukashi = Date.now(); sfx.dexComplete(); }
+  if (newRare.length || outcome.comeback || oldFirst) saveDex();
 
   upsertMine(key, state.muniCode, outcome);
   if (settings.guided < 2) { settings.guided++; saveSettings(); $('guide').hidden = settings.guided >= 2; }
   state.flaggedIdx = [];
-  showResult({ key, parsed, denom: state.denom, muniCode: state.muniCode, rareHits, feature, outcome });
+  showResult({ key, parsed, denom: state.denom, noteType: state.noteType, muniCode: state.muniCode, rareHits, feature, outcome, oldFirst });
 }
 
 function upsertMine(key, muniCode, outcome) {
@@ -345,13 +408,24 @@ function upsertMine(key, muniCode, outcome) {
     if (outcome.km) entry.km = (entry.km || 0) + outcome.km;
   }
   if (outcome.comeback) entry.comebacks = (entry.comebacks || 0) + 1;
-  if (mine.bills.length > 1000) mine.bills.length = 1000;
+  trimMine();
   saveMine();
+}
+
+// 1,000 件を超えたら、お気に入りでない・いちばん古い（at が小さい）ものから消す（仕様「18-6」）。
+// お気に入りだけで 1,000 件あるときだけ、いちばん古いお気に入りを消す。
+function trimMine() {
+  while (mine.bills.length > 1000) {
+    let idx = -1, oldestAt = Infinity;
+    mine.bills.forEach((b, i) => { if (!b.fav && b.at < oldestAt) { idx = i; oldestAt = b.at; } });
+    if (idx === -1) mine.bills.forEach((b, i) => { if (b.at < oldestAt) { idx = i; oldestAt = b.at; } });
+    mine.bills.splice(idx, 1);
+  }
 }
 
 // ---- 結果 ----
 
-function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }) {
+function showResult({ key, parsed, denom, noteType, muniCode, rareHits, feature, outcome, oldFirst }) {
   state.lastResultKey = key;
   const body = $('result-body');
   const here = muniLatLng(muniCode);
@@ -404,7 +478,10 @@ function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }
   } else if (feature && !outcome.comeback) {
     add('p', 'muted', feature);
   }
-  add('p', 'muted', `${formatSerial(parsed)}（${DENOM_LABEL[denom]}）`);
+  if (oldFirst) add('p', 'rare-hit', '昔のお札を登録しました');
+  const oldRow = noteType && Bill.NOTE_TYPES.find((t) => t.id === noteType);
+  const denomParen = oldRow ? `${DENOM_LABEL[oldRow.denom]}・${oldRow.short}` : DENOM_LABEL[denom];
+  add('p', 'muted', `${formatSerial(parsed)}（${denomParen}）`);
 
   if (outcome.comeback && loopLatLngs && loopLatLngs.length > 1) {
     const mapHost = document.createElement('div');
@@ -530,6 +607,7 @@ async function openCamera() {
         canvas: $('cam-canvas'),
         frame: document.querySelector('.cam-frame'),
         denom: () => state.denom,
+        typeId: () => state.noteType,
         onTick: (text) => { $('cam-hint').textContent = text ? `読んでいます: ${text.replace(/\s+/g, ' ').slice(0, 20)}` : '記番号を枠に合わせてください'; },
         onMatch: (serial, cand) => {
           sfx.camHit();
@@ -557,8 +635,16 @@ function renderCamDenoms() {
   for (const d of Bill.DENOMS) {
     const b = document.createElement('button');
     b.textContent = DENOM_LABEL[d];
-    b.setAttribute('aria-pressed', String(d === state.denom));
-    b.addEventListener('click', () => { state.denom = d; renderCamDenoms(); sfx.choice(); });
+    b.setAttribute('aria-pressed', String(!state.noteType && d === state.denom));
+    b.addEventListener('click', () => { state.denom = d; state.noteType = null; renderCamDenoms(); sfx.choice(); });
+    host.appendChild(b);
+  }
+  // 昔のお札を選んでいるときだけ、その札の名を明るく出す（撮影の画面ではシートを開かない。閉じて入力で変える）
+  const oldRow = state.noteType && Bill.NOTE_TYPES.find((t) => t.id === state.noteType);
+  if (oldRow) {
+    const b = document.createElement('button');
+    b.textContent = oldRow.short;
+    b.setAttribute('aria-pressed', 'true');
     host.appendChild(b);
   }
 }
@@ -609,11 +695,19 @@ function switchTab(tab) {
 }
 
 // ---- 自分の記録 ----
+//
+// 一覧（仕様「18」）は別の画面にせず、「記録を見る」ボタンでこの場で開閉する（オーナーの決定、20 節）。
+// 開閉の状態はページを開いている間だけ覚える（保存しない）。
+
+let mineListOpen = false;
+
+function billRareHits(b) {
+  const p = Bill.parseKey(b.key);
+  return p ? Bill.rareChecks(p.digits, { series: p.series, prefix: p.prefix, suffix: p.suffix }) : [];
+}
 
 function renderMine() {
   const total = mine.bills.length;
-  const byDenom = {};
-  for (const b of mine.bills) byDenom[b.key.match(/[EFD](\d+)/)?.[1] || '?'] = (byDenom[b.key.match(/[EFD](\d+)/)?.[1] || '?'] || 0) + 1;
   const rediscovered = mine.bills.filter((b) => (b.seen || 1) > 1).length;
   const totalKm = mine.bills.reduce((s, b) => s + (b.km || 0), 0);
   const muniCount = new Set(mine.bills.map((b) => b.muni)).size;
@@ -635,26 +729,133 @@ function renderMine() {
 
   const dexHost = $('mine-dex');
   dexHost.replaceChildren();
-  const NAMES = { zorome: 'ゾロ目', kiriban: 'キリ番', wakai: '若い番号', kaidan: '階段', kagami: '鏡', kurikaeshi: 'くり返し', zorozoro: 'ぞろぞろ', eiji: '英字もそろう', kaiki: '戻ってきたお札' };
-  // 「戻ってきたお札」はレア番号と同じ図鑑の枠に、記番号の並びとは別の枠として並べる
-  for (const id of [...Bill.RARE_IDS, 'kaiki']) {
+  const NAMES = {
+    zorome: 'ゾロ目', kiriban: 'キリ番', wakai: '若い番号', kaidan: '階段', kagami: '鏡',
+    kurikaeshi: 'くり返し', zorozoro: 'ぞろぞろ', eiji: '英字もそろう',
+    kaiki: '戻ってきたお札', mukashi: '昔のお札',
+  };
+  // 「戻ってきたお札」「昔のお札」は、番号の判定とは別の枠として同じ図鑑に並べる
+  for (const id of [...Bill.RARE_IDS, 'kaiki', 'mukashi']) {
     dexHost.appendChild(el('div', `slot ${dex.found[id] ? 'got' : 'pending'}`, NAMES[id] || id));
   }
 
-  const sort = $('mine-sort').value;
-  const sorted = [...mine.bills].sort((a, b) => sort === 'far' ? (b.km || 0) - (a.km || 0) : sort === 'denom' ? Number(b.key.match(/\d+/)) - Number(a.key.match(/\d+/)) : b.at - a.at);
-  const listHost = $('mine-list');
-  listHost.replaceChildren();
-  for (const b of sorted) {
-    const row = el('div', 'bill-row');
-    const label = b.comebacks ? `${muniLabel(b.muni) || ''} ・おかえり×${b.comebacks}` : (muniLabel(b.muni) || '');
-    row.appendChild(el('span', null, label));
-    row.appendChild(el('span', 'muted', `${b.km || 0} km`));
-    row.addEventListener('click', () => openJourney(b.key));
-    listHost.appendChild(row);
+  const toggle = $('btn-mine-toggle');
+  const recordsHost = $('mine-records');
+  const emptyHost = $('mine-empty');
+  const emptyBtn = $('btn-mine-empty-register');
+  if (total === 0) {
+    toggle.hidden = true;
+    recordsHost.hidden = true;
+    emptyHost.hidden = false;
+    emptyBtn.hidden = false;
+    return;
+  }
+  emptyHost.hidden = true;
+  emptyBtn.hidden = true;
+  toggle.hidden = false;
+  toggle.textContent = mineListOpen ? '閉じる ▲' : `記録を見る（${total} 枚）›`;
+  toggle.setAttribute('aria-expanded', String(mineListOpen));
+  recordsHost.hidden = !mineListOpen;
+  if (mineListOpen) renderMineList();
+}
+$('btn-mine-toggle').addEventListener('click', () => {
+  mineListOpen = !mineListOpen;
+  sfx.choice();
+  renderMine();
+});
+$('btn-mine-empty-register').addEventListener('click', () => switchTab('input'));
+
+const DENOM_GROUP_ORDER = [10000, 5000, 2000, 1000, 500, 100, 50];
+
+function renderMineList() {
+  const favCount = mine.bills.filter((b) => b.fav).length;
+  const rareCount = mine.bills.filter((b) => billRareHits(b).length > 0).length;
+  const filterHost = $('mine-filter');
+  filterHost.replaceChildren();
+  for (const [id, label] of [
+    ['all', `すべて ${mine.bills.length}`], ['fav', `★ お気に入り ${favCount}`], ['rare', `✨ レア ${rareCount}`],
+  ]) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(settings.listFilter === id));
+    b.addEventListener('click', () => { settings.listFilter = id; saveSettings(); sfx.choice(); renderMineList(); });
+    filterHost.appendChild(b);
+  }
+
+  $('mine-sort').value = settings.listSort;
+
+  let list = mine.bills;
+  if (settings.listFilter === 'fav') list = list.filter((b) => b.fav);
+  else if (settings.listFilter === 'rare') list = list.filter((b) => billRareHits(b).length > 0);
+
+  const groupsHost = $('mine-groups');
+  groupsHost.replaceChildren();
+  if (list.length === 0) {
+    const msg = settings.listFilter === 'fav' ? '★ を押したお札が、ここに集まります'
+      : settings.listFilter === 'rare' ? 'レア番号のお札はまだありません' : 'まだ登録したお札はありません';
+    groupsHost.appendChild(el('p', 'muted', msg));
+    return;
+  }
+
+  for (const d of DENOM_GROUP_ORDER) {
+    const rows = list.filter((b) => Bill.parseKey(b.key)?.denom === d);
+    if (!rows.length) continue;
+    rows.sort((a, b) => Bill.compareBills(a, b, settings.listSort));
+    const details = document.createElement('details');
+    details.open = true;
+    details.addEventListener('toggle', () => sfx.choice());
+    details.appendChild(el('summary', null, `${DENOM_LABEL[d]}札 ${rows.length} 枚`));
+    const rowsHost = el('div', 'bill-list');
+    for (const b of rows) rowsHost.appendChild(billRow(b));
+    details.appendChild(rowsHost);
+    groupsHost.appendChild(details);
   }
 }
-$('mine-sort').addEventListener('change', renderMine);
+$('mine-sort').addEventListener('change', (e) => { settings.listSort = e.target.value; saveSettings(); sfx.choice(); renderMineList(); });
+
+function billRow(b) {
+  const p = Bill.parseKey(b.key);
+  const row = el('div', 'rec-row');
+  const main = el('div', 'rec-main');
+  const line1 = el('div', 'rec-line1');
+  if (p) {
+    if (Bill.colorsFor(p.series, p.denom).length > 1) {
+      const dot = el('span', 'rec-dot');
+      dot.style.background = COLOR_CSS[p.color] || '#888';
+      line1.appendChild(dot);
+      line1.appendChild(el('span', 'muted', Bill.COLOR_NAME[p.color] || ''));
+    }
+    line1.appendChild(el('span', 'rec-serial', formatSerial(p)));
+    const noteRow = Bill.NOTE_TYPES.find((t) => t.id === p.typeId);
+    if (noteRow?.old) line1.appendChild(el('span', 'badge badge--old', noteRow.short));
+    for (const r of billRareHits(b)) line1.appendChild(el('span', 'badge badge--rare', `✨${r.name}`));
+  } else {
+    line1.appendChild(el('span', 'rec-serial', b.key));
+  }
+  main.appendChild(line1);
+
+  const parts = [muniLabel(b.muni), formatDateTime(b.at)].filter(Boolean);
+  if (b.km) parts.push(`${b.km} km`);
+  if (b.comebacks) parts.push(`おかえり×${b.comebacks}`);
+  main.appendChild(el('div', 'rec-line2 muted', parts.join(' ・ ')));
+  row.appendChild(main);
+
+  const fav = document.createElement('button');
+  fav.className = 'rec-fav';
+  fav.setAttribute('aria-label', 'お気に入り');
+  fav.setAttribute('aria-pressed', String(!!b.fav));
+  fav.textContent = b.fav ? '★' : '☆';
+  fav.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (b.fav) delete b.fav; else { b.fav = true; sfx.choice(); }
+    saveMine();
+    renderMineList();
+  });
+  row.appendChild(fav);
+
+  row.addEventListener('click', () => openJourney(b.key));
+  return row;
+}
 
 // 外から来た文字（Firestore の値など）を innerHTML に入れないための小さな組み立て。
 function el(tag, cls, text) {
@@ -755,17 +956,14 @@ function tryRelayLink() {
   const m = location.hash.match(/^#r=(.+)$/);
   if (!m) return;
   const key = decodeURIComponent(m[1]);
-  const parts = key.match(/^([EFD])(\d+)([KBN])-(.+)$/);
-  if (!parts) return;
-  const [, series, denomStr, color, serial] = parts;
-  const denom = Number(denomStr);
-  if (!Bill.DENOMS.includes(denom)) return;
-  const parsed = Bill.parseSerial(serial, denom);
-  if (!parsed.ok || parsed.series !== series) return;
-  state.denom = denom;
-  state.buffer = serial;
-  state.color = color;
+  const parsed = Bill.parseKey(key); // 昔のお札の鍵も含めて、形の確かめを通ったものだけ使う
+  if (!parsed) return;
+  state.denom = parsed.denom;
+  state.noteType = parsed.old ? parsed.typeId : null;
+  state.buffer = parsed.serial;
+  state.color = parsed.color;
   state.relayKey = key;
+  settings.lastDenom = state.denom; settings.lastNoteType = state.noteType; saveSettings();
   $('relay-banner').hidden = false;
   sfx.relayReceived();
   switchTab('input');

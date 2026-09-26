@@ -8,20 +8,41 @@ export const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 export const DENOMS = [1000, 2000, 5000, 10000];
 
-// 券種・色の組み合わせ（号券ごとに使える色）
-const COLORS = {
-  F10000: ['K'], F5000: ['K'], F1000: ['K'],
-  E10000: ['K', 'B'], E5000: ['K', 'B'], E1000: ['K', 'B', 'N'],
-  D2000: ['K'],
-};
-export const COLOR_NAME = { K: '黒', B: '茶', N: '紺' };
+// 券種の表(仕様「19-3」)。号券・券種の組み合わせごとに、使える色・記番号の形(pre=頭の英字の最大の数、
+// suf=末尾の英字の数の候補)をここに 1 つだけ置く。old: true は「もっと見る」に出す、今は発行していないお札。
+export const NOTE_TYPES = [
+  { id: 'F10000', series: 'F', denom: 10000, colors: ['K'], pre: 2, suf: [2] },
+  { id: 'F5000', series: 'F', denom: 5000, colors: ['K'], pre: 2, suf: [2] },
+  { id: 'F1000', series: 'F', denom: 1000, colors: ['K'], pre: 2, suf: [2] },
+  { id: 'E10000', series: 'E', denom: 10000, colors: ['K', 'B'], pre: 2, suf: [1] },
+  { id: 'E5000', series: 'E', denom: 5000, colors: ['K', 'B'], pre: 2, suf: [1] },
+  { id: 'E1000', series: 'E', denom: 1000, colors: ['K', 'B', 'N'], pre: 2, suf: [1] },
+  { id: 'D2000', series: 'D', denom: 2000, colors: ['K'], pre: 2, suf: [1] },
+  // ---- 昔のお札（仕様「19」。今は発行していないが法的に有効） ----
+  { id: 'D10000', series: 'D', denom: 10000, colors: ['K', 'B'], pre: 2, suf: [1], old: true, portrait: '福沢諭吉', from: 1984, short: '昔・福沢諭吉' },
+  { id: 'C10000', series: 'C', denom: 10000, colors: ['K'], pre: 2, suf: [1], old: true, portrait: '聖徳太子', from: 1958, short: '昔・聖徳太子' },
+  { id: 'D5000', series: 'D', denom: 5000, colors: ['K', 'B'], pre: 2, suf: [1], old: true, portrait: '新渡戸稲造', from: 1984, short: '昔・新渡戸稲造' },
+  { id: 'C5000', series: 'C', denom: 5000, colors: ['K'], pre: 2, suf: [1], old: true, portrait: '聖徳太子', from: 1957, short: '昔・聖徳太子' },
+  { id: 'D1000', series: 'D', denom: 1000, colors: ['K', 'U', 'B', 'G'], pre: 2, suf: [1], old: true, portrait: '夏目漱石', from: 1984, short: '昔・夏目漱石' },
+  { id: 'C1000', series: 'C', denom: 1000, colors: ['K', 'U'], pre: 2, suf: [1], old: true, portrait: '伊藤博文', from: 1963, short: '昔・伊藤博文' },
+  { id: 'B1000', series: 'B', denom: 1000, colors: ['K'], pre: 2, suf: [1], old: true, portrait: '聖徳太子', from: 1950, short: '昔・聖徳太子' },
+  { id: 'C500', series: 'C', denom: 500, colors: ['K'], pre: 2, suf: [1], old: true, portrait: '岩倉具視', from: 1969, short: '昔・岩倉具視' },
+  { id: 'B500', series: 'B', denom: 500, colors: ['K'], pre: 2, suf: [1], old: true, portrait: '岩倉具視', from: 1951, short: '昔・岩倉具視' },
+  { id: 'B100', series: 'B', denom: 100, colors: ['K'], pre: 2, suf: [1], old: true, portrait: '板垣退助', from: 1953, short: '昔・板垣退助' },
+  { id: 'B50', series: 'B', denom: 50, colors: ['K'], pre: 1, suf: [1], old: true, portrait: '高橋是清', from: 1951, short: '昔・高橋是清' },
+];
+
+export const COLOR_NAME = { K: '黒', B: '茶', N: '紺', U: '青', G: '緑' };
 
 const RE_F = /^[A-HJ-NP-Z]{2}[0-9]{6}[A-HJ-NP-Z]{2}$/;
 const RE_1 = /^[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$/; // E・D 号券
 
-/** 号券に使える色の一覧。分からない組み合わせは空配列 */
+function noteType(id) { return NOTE_TYPES.find((t) => t.id === id); }
+
+/** 号券・券種に使える色の一覧。分からない組み合わせは空配列 */
 export function colorsFor(series, denom) {
-  return COLORS[`${series}${denom}`] || [];
+  const row = NOTE_TYPES.find((t) => t.series === series && t.denom === denom);
+  return row ? row.colors : [];
 }
 
 /** 末尾の英字が 2 文字なら F 号券、1 文字なら E 号券（1 万・5 千・千のみ）。2 千円は常に D 号券 */
@@ -55,13 +76,31 @@ export function normalize(raw) {
 /**
  * 記番号の文字列を、券種に合う号券の形へ当てはめる。
  * @param {string} raw 打った・読んだ文字（正規化前でもよい）
- * @param {number} denom 1000/2000/5000/10000
+ * @param {number} denom 1000/2000/5000/10000（typeId があるときは、その行の denom と同じはず）
+ * @param {string|null} typeId NOTE_TYPES の id。「もっと見る」で選んだ昔のお札のとき。無ければ形から号券を自動判定
  * @returns {{ ok: true, series: string, prefix: string, digits: string, suffix: string, serial: string }
  *          | { ok: false, reason: string }}
  */
-export function parseSerial(raw, denom) {
-  if (!DENOMS.includes(denom)) return { ok: false, reason: '券種が不明' };
+export function parseSerial(raw, denom, typeId = null) {
   const s = normalize(raw);
+
+  if (typeId) {
+    const row = noteType(typeId);
+    if (!row || row.denom !== denom) return { ok: false, reason: '券種が不明' };
+    const preRange = row.pre === 1 ? '{1}' : '{1,2}';
+    for (const sufLen of [...row.suf].sort((a, b) => b - a)) {
+      const re = new RegExp(`^([A-HJ-NP-Z]${preRange})([0-9]{6})([A-HJ-NP-Z]{${sufLen}})$`);
+      const m = s.match(re);
+      if (!m) continue;
+      const [, prefix, digits, suffix] = m;
+      const n = parseInt(digits, 10);
+      if (n < 1 || n > 900000) return { ok: false, reason: '数字が範囲外（000001〜900000）' };
+      return { ok: true, series: row.series, prefix, digits, suffix, serial: `${prefix}${digits}${suffix}` };
+    }
+    return { ok: false, reason: '記番号の形に合いません' };
+  }
+
+  if (!DENOMS.includes(denom)) return { ok: false, reason: '券種が不明' };
 
   // F 号券の形（英字 2 + 数字 6 + 英字 2）を先に、次に E・D 号券の形（英字 1〜2 + 数字 6 + 英字 1）を試す。
   const attempts = denom === 2000
@@ -89,16 +128,21 @@ export function parseSerial(raw, denom) {
  * 先頭は必ず英字。2 文字目は、英字の続き（頭 2 文字＝F 号券の形）か、もう数字が始まる（頭 1 文字）か
  * まだ決まらないので両方を返す。数字が 6 桁そろったら次は英字、そこから先は号券が決まっているかどうかで
  * もう 1 文字打てるかが決まる。
+ * @param {string|null} typeId NOTE_TYPES の id。昔のお札を選んでいるとき
  * @returns {'letter' | 'digit' | 'either' | null} null は、これ以上打っても形に合わないとき
  */
-export function nextKind(buffer, denom) {
+export function nextKind(buffer, denom, typeId = null) {
   const s = normalize(buffer);
   const n = s.length;
   if (n === 0) return 'letter';
 
+  const row = typeId ? noteType(typeId) : null;
+  const preMax = row ? row.pre : 2;
+
   const firstDigitIdx = [...s].findIndex((c) => /[0-9]/.test(c));
   if (firstDigitIdx === -1) {
     // まだ数字が出てきていない＝頭の英字の途中
+    if (preMax === 1) return 'digit'; // 頭は必ず 1 文字（B50 など）。もう数字の始まり
     if (n === 1) return 'either'; // 頭が 1 文字（もう数字が始まる）か 2 文字（もう 1 英字）か、まだ決まらない
     return 'digit'; // 頭の英字は 2 文字まで。次は数字の始まり
   }
@@ -109,8 +153,9 @@ export function nextKind(buffer, denom) {
   if (digitsTyped === 6) return 'letter'; // 末尾の英字 1 文字目
   if (digitsTyped === 7) {
     // 2 文字目の英字が打てるのは F 号券の形（頭 2 文字・末尾 2 文字）のときだけ。
-    // 2 千円は D 号券だけなので末尾は常に 1 文字。
-    return denom !== 2000 && prefixLen === 2 ? 'letter' : null;
+    // 2 千円は D 号券だけなので末尾は常に 1 文字。昔のお札(row)は末尾 1 文字のものしか無い。
+    const maxSuf = row ? Math.max(...row.suf) : (denom !== 2000 ? 2 : 1);
+    return maxSuf >= 2 && prefixLen === preMax ? 'letter' : null;
   }
   return null; // もう形は完成している
 }
@@ -123,6 +168,26 @@ export function buildKey({ series, denom, color, serial }) {
 /** 記番号の完成した見た目かどうか（キーパッド側で「登録」を押せるかに使う） */
 export function isComplete(raw, denom) {
   return parseSerial(raw, denom).ok;
+}
+
+/**
+ * お札の鍵を分ける（仕様「19-4」）。`<号券><券種><色>-<記番号>` の形と、券種・色・号券・記番号の
+ * 組み合わせが NOTE_TYPES にあるものだけを返す。合わなければ null（一覧・自分の記録の並びに使う）。
+ * @returns {{ series, denom, color, typeId, prefix, digits, suffix, serial, old } | null}
+ */
+export function parseKey(key) {
+  const m = String(key).match(/^([BCDEF])(\d+)([KBNUG])-(.+)$/);
+  if (!m) return null;
+  const [, series, denomStr, color] = m;
+  const denom = Number(denomStr);
+  const row = NOTE_TYPES.find((t) => t.series === series && t.denom === denom);
+  if (!row || !row.colors.includes(color)) return null;
+  const parsed = parseSerial(m[4], denom, row.old ? row.id : null);
+  if (!parsed.ok || parsed.series !== series) return null;
+  return {
+    series, denom, color, typeId: row.id, old: !!row.old,
+    prefix: parsed.prefix, digits: parsed.digits, suffix: parsed.suffix, serial: parsed.serial,
+  };
 }
 
 // ---- カメラで読んだ文字の直し（仕様 8-2 の置き換え表） ----
@@ -243,6 +308,47 @@ export function smallFeature(digits) {
 }
 
 export const RARE_IDS = [...RARE_DEFS.map((r) => r.id), RARE_LETTERS.id];
+
+// 珍しさの順（一覧の「レア順」に使う。仕様「18-5」）。判定を足したらここにも足す。
+export const RARE_RANK = ['zorome', 'kiriban', 'kaidan', 'wakai', 'kagami', 'zorozoro', 'kurikaeshi', 'eiji'];
+
+/** そのお札のいちばん珍しい判定の順位と、当たった数（レアでなければ null。一覧の「レア順」に使う） */
+function rareInfo(bill) {
+  const p = parseKey(bill.key);
+  if (!p) return null;
+  const hits = rareChecks(p.digits, { series: p.series, prefix: p.prefix, suffix: p.suffix });
+  if (!hits.length) return null;
+  return { bestRank: Math.min(...hits.map((h) => RARE_RANK.indexOf(h.id))), count: hits.length };
+}
+
+/**
+ * 一覧の並び替え（仕様「18-5」）。券種のまとまりの中でこの順に並べる。
+ * @param {{key,at,km}} a
+ * @param {{key,at,km}} b
+ * @param {'new'|'old'|'num'|'rare'|'far'} sort
+ */
+export function compareBills(a, b, sort) {
+  if (sort === 'old') return a.at - b.at;
+  if (sort === 'far') return ((b.km || 0) - (a.km || 0)) || (b.at - a.at);
+  if (sort === 'num') {
+    const pa = parseKey(a.key), pb = parseKey(b.key);
+    const da = pa?.digits || '', db = pb?.digits || '';
+    if (da !== db) return da < db ? -1 : 1;
+    const pfa = pa?.prefix || '', pfb = pb?.prefix || '';
+    if (pfa !== pfb) return pfa < pfb ? -1 : 1;
+    const sfa = pa?.suffix || '', sfb = pb?.suffix || '';
+    if (sfa !== sfb) return sfa < sfb ? -1 : 1;
+    return b.at - a.at;
+  }
+  if (sort === 'rare') {
+    const ia = rareInfo(a), ib = rareInfo(b);
+    if (ia && ib) return (ia.bestRank - ib.bestRank) || (ib.count - ia.count) || (b.at - a.at);
+    if (ia && !ib) return -1;
+    if (!ia && ib) return 1;
+    return b.at - a.at;
+  }
+  return b.at - a.at; // 'new'(既定)
+}
 
 // ---- 距離・時間 ----
 

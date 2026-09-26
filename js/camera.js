@@ -194,8 +194,9 @@ function otsuThreshold(hist, total) {
  * 自動で読み続けるループ。形に合う同じ結果が 2 回続いたら止めて確定する。
  * @returns {{ stop: () => void }}
  */
-export function startScanLoop({ video, canvas, frame, denom, onProgress, onMatch, onTick, onTimeout }) {
+export function startScanLoop({ video, canvas, frame, denom, typeId = null, onProgress, onMatch, onTick, onTimeout }) {
   const getDenom = () => (typeof denom === 'function' ? denom() : denom);
+  const getTypeId = () => (typeof typeId === 'function' ? typeId() : typeId);
   let stopped = false;
   let lastKey = null;
   let streak = 0;
@@ -217,11 +218,20 @@ export function startScanLoop({ video, canvas, frame, denom, onProgress, onMatch
       const { data } = await w.recognize(canvas);
       const text = (data?.text || '').trim();
       onTick?.(text);
-      const cand = extractSerialCandidate(text);
+      const rawCand = extractSerialCandidate(text);
+      // extractSerialCandidate は末尾 2 文字の候補を先に返す。denom・typeId の形に合わなければ、
+      // 末尾を 1 文字に切り詰めてもう一度確かめる（昔のお札と E 号券の両方で効く。仕様「19-4」）。
+      let cand = rawCand;
+      let serial = rawCand ? `${rawCand.prefix}${rawCand.digits}${rawCand.suffix}` : null;
+      let ok = rawCand ? parseSerial(serial, getDenom(), getTypeId()).ok : false;
+      if (rawCand && !ok && rawCand.suffix.length === 2) {
+        const trimmed = { ...rawCand, suffix: rawCand.suffix.slice(-1) };
+        const altSerial = `${trimmed.prefix}${trimmed.digits}${trimmed.suffix}`;
+        if (parseSerial(altSerial, getDenom(), getTypeId()).ok) { cand = trimmed; serial = altSerial; ok = true; }
+      }
       if (cand) {
-        const serial = `${cand.prefix}${cand.digits}${cand.suffix}`;
         bestPartial = bestPartial || serial;
-        if (parseSerial(serial, getDenom()).ok) {
+        if (ok) {
           if (serial === lastKey) {
             streak++;
             if (streak >= 2) { onMatch(serial, cand); return; }

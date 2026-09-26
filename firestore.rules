@@ -12,11 +12,18 @@ service cloud.firestore {
     // ponytail: 数字 6 桁が 000001〜900000 の範囲かまでは正規表現では見ていない
     // （000000・900001 以上は rules の外の値なので、app 側で弾いていれば実害はない）。
     // 数字の範囲まで rules で締めたくなったら、6 桁を 1 桁ずつ書いた正規表現に置き換える。
+    // 昔のお札(仕様「19」。今は発行していないが法的に有効)の 6 行を足す。js/bill.js の NOTE_TYPES と同じ組み合わせ。
     function isValidKey(key) {
       return key.matches('^F(10000|5000|1000)K-[A-HJ-NP-Z]{2}[0-9]{6}[A-HJ-NP-Z]{2}$')
           || key.matches('^E(10000|5000)[KB]-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
           || key.matches('^E1000[KBN]-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
-          || key.matches('^D2000K-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$');
+          || key.matches('^D2000K-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^D(10000|5000)[KB]-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^D1000[KUBG]-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^C(10000|5000|500)K-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^C1000[KU]-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^B(1000|500|100)K-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^B50K-[A-HJ-NP-Z][0-9]{6}[A-HJ-NP-Z]$');
     }
 
     function signedIn() { return request.auth != null; }
@@ -93,7 +100,7 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['denom', 'from', 'to', 'km', 'mins', 'n', 'at', 'v', 'comeback'])
-        && request.resource.data.denom in [1000, 2000, 5000, 10000]
+        && request.resource.data.denom in [50, 100, 500, 1000, 2000, 5000, 10000]
         && isMuniCode(request.resource.data.from)
         && isMuniCode(request.resource.data.to)
         && request.resource.data.km is int && request.resource.data.km >= 0 && request.resource.data.km <= 3000

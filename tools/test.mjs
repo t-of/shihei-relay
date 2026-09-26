@@ -10,6 +10,7 @@ import {
   distanceKm, formatDuration, isMuniCode,
   sightingDocId, parseSightingDocId, analyzeRegistration, sumPathKm,
   RETURN_MIN_GAP_MS, MAX_RETURN_N,
+  NOTE_TYPES, parseKey, RARE_RANK, compareBills,
 } from '../js/bill.js';
 
 // ---- 形の正しい例・間違った例 ----
@@ -346,6 +347,119 @@ test('sumPathKm: 1 点だけなら 0', () => {
 });
 
 // ---- カメラ: 字の塊だけを選ぶ ----
+
+// ---- 昔のお札（仕様「19」）: 記番号の形・parseKey・並び替え ----
+
+test('昔のお札: 各券種の正しい例', () => {
+  assert.equal(parseSerial('AB123456C', 10000, 'D10000').ok, true);
+  assert.equal(parseSerial('A123456B', 10000, 'C10000').ok, true);
+  assert.equal(parseSerial('AB123456C', 5000, 'D5000').ok, true);
+  assert.equal(parseSerial('A123456B', 5000, 'C5000').ok, true);
+  assert.equal(parseSerial('AB123456C', 1000, 'D1000').ok, true);
+  assert.equal(parseSerial('A123456B', 1000, 'C1000').ok, true);
+  assert.equal(parseSerial('A123456B', 1000, 'B1000').ok, true);
+  assert.equal(parseSerial('A123456B', 500, 'C500').ok, true);
+  assert.equal(parseSerial('A123456B', 500, 'B500').ok, true);
+  assert.equal(parseSerial('A123456B', 100, 'B100').ok, true);
+  assert.equal(parseSerial('A123456B', 50, 'B50').ok, true);
+});
+
+test('昔のお札: B50 は末尾 2 文字（頭 2 文字）をはじく', () => {
+  assert.equal(parseSerial('AB123456C', 50, 'B50').ok, false); // 頭 2 文字はだめ
+  assert.equal(parseSerial('A123456BC', 50, 'B50').ok, false); // 末尾 2 文字もだめ
+});
+
+test('昔のお札: D1000 の 4 色（黒・青・茶・緑）', () => {
+  assert.deepEqual(colorsFor('D', 1000), ['K', 'U', 'B', 'G']);
+});
+
+test('昔のお札: C10000 は黒だけ（茶はだめ）', () => {
+  assert.equal(parseKey('C10000B-A123456B'), null);
+  assert.ok(parseKey('C10000K-A123456B'));
+});
+
+test('parseKey: 昔のお札の鍵を分ける（往復）', () => {
+  const cases = [
+    'D1000G-AB123456C', 'C500K-A123456B', 'B50K-A123456B', 'D10000B-A123456B', 'B100K-A123456B',
+  ];
+  for (const key of cases) {
+    const p = parseKey(key);
+    assert.ok(p, key);
+    assert.equal(buildKey({ series: p.series, denom: p.denom, color: p.color, serial: p.serial }), key, key);
+    assert.equal(p.old, true, key);
+  }
+});
+
+test('parseKey: 今の鍵（F・E・D2000）はそのまま読める', () => {
+  for (const key of ['F10000K-AB123456CD', 'E1000N-A123456B', 'D2000K-A123456B']) {
+    const p = parseKey(key);
+    assert.ok(p, key);
+    assert.equal(p.old, false, key);
+  }
+});
+
+test('parseKey: 形の悪い鍵は null', () => {
+  assert.equal(parseKey('X1000K-A123456B'), null); // 無い号券
+  assert.equal(parseKey('D1000Z-AB123456C'), null); // 無い色
+  assert.equal(parseKey('AB123456CD'), null); // 鍵の形ですらない
+});
+
+test('昔のお札: 末尾を 1 文字に直す（読み取りの直し。19-4）', () => {
+  // B50 は頭 1 文字だけなので、頭が 2 文字に見えたら末尾を 1 文字に切り詰めて確かめ直す想定
+  const full = parseSerial('AB123456C', 50, 'B50');
+  assert.equal(full.ok, false);
+  const trimmed = parseSerial('A123456C', 50, 'B50');
+  assert.equal(trimmed.ok, true);
+});
+
+test('NOTE_TYPES: すべての行が pre・suf・colors を持つ', () => {
+  for (const t of NOTE_TYPES) {
+    assert.ok(t.id && t.series && t.denom && Array.isArray(t.colors) && t.pre && Array.isArray(t.suf), t.id);
+  }
+});
+
+test('nextKind: B50（頭 1 文字だけ）は 1 文字打ったらもう数字だけ', () => {
+  assert.equal(nextKind('A', 50, 'B50'), 'digit');
+  assert.equal(nextKind('A123456B', 50, 'B50'), null); // 末尾 1 文字で完成
+});
+
+test('nextKind: 昔のお札（頭 1〜2 文字）は今の E・D 号券と同じ振る舞い', () => {
+  assert.equal(nextKind('A', 1000, 'D1000'), 'either');
+  assert.equal(nextKind('AB', 1000, 'D1000'), 'digit');
+  assert.equal(nextKind('AB123456C', 1000, 'D1000'), null);
+});
+
+// ---- 一覧の並び替え（仕様「18-5」） ----
+
+test('RARE_RANK: 珍しさの順（ゾロ目が最初）', () => {
+  assert.equal(RARE_RANK[0], 'zorome');
+  assert.equal(RARE_RANK.length, 8);
+});
+
+test('compareBills: 新しい順・古い順', () => {
+  const a = { key: 'F10000K-AB123456CD', at: 100, km: 0 };
+  const b = { key: 'F10000K-AB222222CD', at: 200, km: 0 };
+  assert.ok(compareBills(a, b, 'new') > 0); // b(新しい)が先
+  assert.ok(compareBills(a, b, 'old') < 0); // a(古い)が先
+});
+
+test('compareBills: 番号順（数字→頭の英字→末尾の英字）', () => {
+  const a = { key: 'F10000K-AB100000CD', at: 1 };
+  const b = { key: 'F10000K-AB200000CD', at: 1 };
+  assert.ok(compareBills(a, b, 'num') < 0);
+});
+
+test('compareBills: 距離の長い順', () => {
+  const a = { key: 'F10000K-AB123456CD', at: 1, km: 10 };
+  const b = { key: 'F10000K-AB222222CD', at: 1, km: 50 };
+  assert.ok(compareBills(a, b, 'far') > 0);
+});
+
+test('compareBills: レア順（レアが上、同じ順位なら新しい順）', () => {
+  const rare = { key: 'F10000K-AB777777CD', at: 1 }; // ゾロ目
+  const normal = { key: 'F10000K-AB284917CD', at: 2 };
+  assert.ok(compareBills(rare, normal, 'rare') < 0);
+});
 
 test('pickChars: 高さのそろった字だけ残し、枠に触れる模様・小さな点は捨てる', async () => {
   const { pickChars } = await import('../js/camera.js');
