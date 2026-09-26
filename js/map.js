@@ -18,7 +18,87 @@ export async function mountMap(host) {
   host.innerHTML = await loadOutline();
   const svg = host.querySelector('svg');
   svg.classList.add('jp-map');
+  enableZoom(host, svg);
   return svg;
+}
+
+const MAX_ZOOM = 12;
+
+/** ピンチ・ドラッグ・Ctrl+ホイール（Mac のトラックパッドのピンチも）・＋－ボタンで拡大縮小。viewBox を動かす */
+function enableZoom(host, svg) {
+  const full = svg.viewBox.baseVal;
+  const W = full.width, H = full.height;
+  let v = { x: 0, y: 0, w: W, h: H };
+  const apply = () => {
+    v.w = Math.min(W, Math.max(W / MAX_ZOOM, v.w));
+    v.h = v.w * H / W;
+    v.x = Math.min(W - v.w, Math.max(0, v.x));
+    v.y = Math.min(H - v.h, Math.max(0, v.y));
+    svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+    svg.style.setProperty('--z', W / v.w); // 拡大しても点と線の見た目の大きさを保つ（style.css）
+    host.classList.toggle('is-zoomed', v.w < W);
+  };
+  // 画面上の点 (cx, cy) を中心に f 倍する
+  const zoomAt = (f, cx, cy) => {
+    const r = svg.getBoundingClientRect();
+    const px = v.x + (cx - r.left) / r.width * v.w;
+    const py = v.y + (cy - r.top) / r.height * v.h;
+    v.w /= f;
+    v.h = v.w * H / W;
+    v.x = px - (cx - r.left) / r.width * v.w;
+    v.y = py - (cy - r.top) / r.height * v.h;
+    apply();
+  };
+  const center = () => { const r = svg.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+
+  svg.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return; // ふつうのホイールはページのスクロールに使う
+    e.preventDefault();
+    zoomAt(Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+  }, { passive: false });
+
+  const pts = new Map();
+  let last = null; // 前回の { x, y, d }（中心と 2 本指の距離）
+  const snapshot = () => {
+    const a = [...pts.values()];
+    const x = a.reduce((s, p) => s + p.x, 0) / a.length;
+    const y = a.reduce((s, p) => s + p.y, 0) / a.length;
+    const d = a.length > 1 ? Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) : 0;
+    return { x, y, d };
+  };
+  svg.addEventListener('pointerdown', (e) => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    svg.setPointerCapture(e.pointerId);
+    last = snapshot();
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const now = snapshot();
+    if (pts.size === 1 && v.w >= W) { last = now; return; } // 縮小しきっているときの 1 本指はページのスクロール
+    const r = svg.getBoundingClientRect();
+    v.x -= (now.x - last.x) / r.width * v.w;
+    v.y -= (now.y - last.y) / r.height * v.h;
+    apply();
+    if (last.d && now.d) zoomAt(now.d / last.d, now.x, now.y);
+    last = now;
+  });
+  const up = (e) => { pts.delete(e.pointerId); last = pts.size ? snapshot() : null; };
+  svg.addEventListener('pointerup', up);
+  svg.addEventListener('pointercancel', up);
+  svg.addEventListener('dblclick', (e) => zoomAt(v.w < W / 4 ? 1 / MAX_ZOOM : 2, e.clientX, e.clientY));
+
+  const bar = document.createElement('div');
+  bar.className = 'map-zoom';
+  for (const [label, name, f] of [['＋', '拡大', 2], ['－', '縮小', 0.5]]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.setAttribute('aria-label', name);
+    b.addEventListener('click', () => zoomAt(f, ...center()));
+    bar.appendChild(b);
+  }
+  host.appendChild(bar);
 }
 
 /** 市区町村コードの点を打つ。self なら見た目を変える */
