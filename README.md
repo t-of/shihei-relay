@@ -101,9 +101,9 @@ Service Worker のキャッシュ（`shihei-relay-ocr-v1`）から読むので�
 
 | キー | 中身 |
 |---|---|
-| `shihei-relay.settings` | `{ v: 1, sound: true, confirm: true, input: 'pad' \| 'camera', lastDenom: 10000\|null, lastMuni: '13101'\|null, guided: 0 }` |
-| `shihei-relay.mine` | `{ v: 1, bills: [{ key, muni, at, seen, rare: string[], km }] }`。自分が登録したお札（最大 1,000 件）。`km` はこの端末からの登録で分かった移動距離の合計（他の人が動かした分は、他の人がここで登録するまでは分からない） |
-| `shihei-relay.dex` | `{ v: 1, found: { zorome: 1790000000000, … } }`。レア番号の図鑑（初めて当てた時刻） |
+| `shihei-relay.settings` | `{ v: 1, sound: true, input: 'pad' \| 'camera', lastDenom: 10000\|null, lastMuni: '13101'\|null, guided: 0 }`。`confirm`（登録前の確かめのスキップ）は廃止した。確かめは必ず出すので、古いデータに残っていても読み捨てるだけでよい |
+| `shihei-relay.mine` | `{ v: 1, bills: [{ key, muni, at, seen, rare: string[], km, comebacks: 0 }] }`。自分が登録したお札（最大 1,000 件）。`km` はこの端末からの登録で分かった移動距離の合計、`comebacks` は「戻ってきた」を選んで登録した回数（無い古いデータは 0 として読む） |
+| `shihei-relay.dex` | `{ v: 1, found: { zorome: 1790000000000, …, kaiki: … } }`。レア番号の図鑑（初めて当てた時刻）。`kaiki` は「戻ってきたお札」に初めて出会った時刻（レア番号と同じ図鑑の枠に並ぶ） |
 
 読み書きは try/catch で囲む。写真は保存しない（localStorage にも IndexedDB にも入れない）。
 文字を読む部品は Service Worker のキャッシュ `shihei-relay-ocr-v1` に入る（2 回目からは読み込まない）。
@@ -113,13 +113,20 @@ Service Worker のキャッシュ（`shihei-relay-ocr-v1`）から読むので�
 お札の鍵 `key` = `<号券><券種><色>-<記番号>`。例 `F10000K-AB123456CD`（新しい 1 万円・黒）。
 色は K 黒 / B 茶（褐色）/ N 紺。
 
-**`bills/{key}/sightings/{uid}`** — 1 人 1 枚につき 1 件。文書の id が登録した人の匿名 id。
+**`bills/{key}/sightings/{docId}`** — 1 回の登録が 1 件。文書の id は、最初の登録が `{uid}`
+（登録した人の匿名 id）、**戻ってきたとき（2 件目以降）は `{uid}_{n}`（n は 1〜3）**。
+1 人が 1 枚のお札に書けるのは、これで最大 4 件（n=0〜3）まで。同じ人がまた登録しようとしたときの
+「また手元に来ましたか？」の判定は `js/bill.js` の `analyzeRegistration`（node --test で確認済み）。
 
 | 項目 | 型・範囲 | 説明 |
 |---|---|---|
 | `muni` | string、5 桁の数字、頭 2 桁が 01〜47 | 市区町村（全国地方公共団体コードの頭 5 桁） |
 | `at` | timestamp、`request.time` のみ | 登録の日時 |
 | `v` | 1 | 版 |
+
+- 前の自分の登録から **3 時間**（`Bill.RETURN_MIN_GAP_MS`）あいていないと、戻ってきたことにできない
+  （重ねて押した・同じ登録の取り違えを防ぐ）。間にほかの人の登録があってもなくても「戻ってきた」を選べる
+  （紙幣リレーを使っていない人の手を渡って戻ってくることがあるため）。
 
 **`hits/{autoId}`** — 再発見 1 回の知らせ（みんなの画面用）。記番号を持たない。
 
@@ -130,6 +137,7 @@ Service Worker のキャッシュ（`shihei-relay-ocr-v1`）から読むので�
 | `km` | int、0〜3000 | 距離 |
 | `mins` | int、0 以上 | かかった時間（分） |
 | `n` | int、2〜1000 | 何人目か（`sightings` の一覧は 100 件までしか読めないので、100 人を超えたお札は頭打ちになる） |
+| `comeback` | bool | 自分のところへ戻ってきた登録なら true（みんなの画面で 🔁 の印） |
 | `at` | timestamp | |
 | `v` | 1 | |
 

@@ -21,8 +21,9 @@ function save(key, value) {
   try { localStorage.setItem(STORE + key, JSON.stringify(value)); } catch { /* 保存できなくても遊べる */ }
 }
 
+// confirm（登録前の確かめのスキップ）は廃止（確かめは必ず出す）。古いデータに残っていても読み捨てる。
 const settings = Object.assign(
-  { v: 1, sound: true, confirm: true, input: 'pad', lastDenom: null, lastMuni: null, guided: 0 },
+  { v: 1, sound: true, input: 'pad', lastDenom: null, lastMuni: null, guided: 0 },
   load('settings', {}),
 );
 const mine = Object.assign({ v: 1, bills: [] }, load('mine', {}));
@@ -54,6 +55,8 @@ const state = {
   camLoop: null,
   lastResultKey: null,
   relayKey: null,
+  flaggedIdx: [], // 撮影で読んで直した・あやしい文字の場所（確認画面で色を変えて出す）
+  pending: null,  // 確認画面に出している { parsed, key }
 };
 
 // ---- 市区町村の表 ----
@@ -175,7 +178,7 @@ function renderKeypad() {
   del.textContent = '消す';
   del.className = 'key--del';
   del.disabled = state.buffer.length === 0;
-  del.addEventListener('click', () => { state.buffer = state.buffer.slice(0, -1); sfx.key(false); renderSerial(); });
+  del.addEventListener('click', () => { state.buffer = state.buffer.slice(0, -1); state.flaggedIdx = []; sfx.key(false); renderSerial(); });
   host.appendChild(del);
 }
 
@@ -186,6 +189,7 @@ function typeChar(ch) {
   const allowed = (kind === 'letter' && isLetter) || (kind === 'digit' && isDigit) || (kind === 'either' && (isLetter || isDigit));
   if (!allowed) return;
   state.buffer += ch;
+  state.flaggedIdx = []; // 手で打ち直したら、撮影の色分けは消す
   sfx.key(isLetter);
   renderSerial();
 }
@@ -193,7 +197,7 @@ function typeChar(ch) {
 document.addEventListener('keydown', (e) => {
   if (currentView() !== 'input' || document.activeElement?.tagName === 'INPUT') return;
   if (/^[a-zA-Z0-9]$/.test(e.key)) typeChar(e.key.toUpperCase());
-  else if (e.key === 'Backspace') { state.buffer = state.buffer.slice(0, -1); renderSerial(); }
+  else if (e.key === 'Backspace') { state.buffer = state.buffer.slice(0, -1); state.flaggedIdx = []; renderSerial(); }
   else if (e.key === 'Enter' && !$('btn-register').disabled) $('btn-register').click();
 });
 
@@ -239,59 +243,100 @@ function openPlaceSheet() {
   $('place-sheet').hidden = false;
 }
 
-// ---- 登録 ----
+// ---- 登録（確認画面は必ず出す。スキップの設定は無い） ----
 
 function formatSerial(parsed) { return `${parsed.prefix} ${parsed.digits} ${parsed.suffix}`; }
+function formatDateTime(ms) {
+  return new Date(ms).toLocaleString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
 $('btn-register').addEventListener('click', () => {
   const parsed = currentParse();
   if (!parsed.ok || !state.muniCode) return;
-  if (settings.confirm) {
-    $('confirm-text').textContent = `${formatSerial(parsed)}（${DENOM_LABEL[state.denom]}）を ${muniLabel(state.muniCode)}に登録します`;
-    $('confirm-skip').checked = false;
-    $('confirm-sheet').hidden = false;
-  } else {
-    doRegister(parsed);
-  }
-});
-$('btn-confirm-cancel').addEventListener('click', () => $('confirm-sheet').hidden = true);
-$('btn-confirm-ok').addEventListener('click', () => {
-  if ($('confirm-skip').checked) { settings.confirm = false; saveSettings(); }
-  $('confirm-sheet').hidden = true;
-  doRegister(currentParse());
+  openConfirmSheet(parsed);
 });
 
-async function doRegister(parsed) {
+function openConfirmSheet(parsed) {
   const key = Bill.buildKey({ series: parsed.series, denom: state.denom, color: state.color, serial: parsed.serial });
+  state.pending = { parsed, key };
+
+  // 撮影で読んだ文字のうち、直した・あやしい文字は色を変えたまま出す
+  const flagged = new Set(state.flaggedIdx || []);
+  const serialHost = $('confirm-serial');
+  serialHost.replaceChildren();
+  [...formatSerial(parsed).replace(/ /g, '')].forEach((c, i) => {
+    serialHost.appendChild(el('span', `cbox${flagged.has(i) ? ' cbox--flag' : ''}`, c));
+  });
+
+  const colorText = state.color && Bill.COLOR_NAME[state.color] ? `・${Bill.COLOR_NAME[state.color]}` : '';
+  $('confirm-meta').textContent = `${DENOM_LABEL[state.denom]}${colorText}・${muniLabel(state.muniCode)}`;
+
+  const prior = mine.bills.find((b) => b.key === key);
+  const priorHost = $('confirm-prior');
+  if (prior) {
+    priorHost.hidden = false;
+    priorHost.textContent = `このお札は前に登録しています（${formatDateTime(prior.at)}・${muniLabel(prior.muni) || ''}）`;
+  } else {
+    priorHost.hidden = true;
+  }
+
+  $('confirm-sheet').hidden = false;
+}
+$('btn-confirm-cancel').addEventListener('click', () => { $('confirm-sheet').hidden = true; });
+$('btn-confirm-ok').addEventListener('click', () => {
+  $('confirm-sheet').hidden = true;
+  if (state.pending) attemptRegister(state.pending.parsed, state.pending.key, false);
+});
+
+// 「また手元に来ましたか？」（前に自分が登録していたとき、サーバーに聞いて分かる）
+$('btn-return-yes').addEventListener('click', () => {
+  $('ask-return-sheet').hidden = true;
+  if (state.pending) attemptRegister(state.pending.parsed, state.pending.key, true);
+});
+$('btn-return-no').addEventListener('click', () => { $('ask-return-sheet').hidden = true; });
+
+async function attemptRegister(parsed, key, confirmedReturn) {
+  if (!FB.isConfigured()) {
+    finishRegister(parsed, key, { ok: true, first: true, comeback: false, offline: true });
+    return;
+  }
+  const res = await FB.registerSighting(key, state.muniCode, { muniLatLng, distanceKm: Bill.distanceKm }, confirmedReturn);
+  if (!res.ok) {
+    if (res.reason === 'ask-return') {
+      $('ask-return-text').textContent =
+        `このお札は前に登録しています（${formatDateTime(res.lastAt)}・${muniLabel(res.lastMuni) || ''}）。また手元に来ましたか？`;
+      $('ask-return-sheet').hidden = false;
+    } else if (res.reason === 'too-soon') {
+      showText('前の登録からまだ時間がたっていません', `前回 ${formatDateTime(res.lastAt)}・${muniLabel(res.lastMuni) || ''} に登録しています。しばらくしてからもう一度お試しください。`);
+    } else if (res.reason === 'return-limit') {
+      showText('登録できません', 'このお札はもう十分に登録されています。');
+    } else {
+      toast('登録できませんでした（時間をおいて試してください）');
+      sfx.error();
+    }
+    return;
+  }
+  finishRegister(parsed, key, res);
+}
+
+function finishRegister(parsed, key, outcome) {
   const rareHits = Bill.rareChecks(parsed.digits, { series: parsed.series, prefix: parsed.prefix, suffix: parsed.suffix });
   const feature = rareHits.length ? null : Bill.smallFeature(parsed.digits);
   const newRare = rareHits.filter((r) => !dex.found[r.id]);
   for (const r of rareHits) if (!dex.found[r.id]) dex.found[r.id] = Date.now();
-  if (newRare.length) saveDex();
-
-  let outcome;
-  if (FB.isConfigured()) {
-    const res = await FB.registerSighting(key, state.muniCode, { muniLatLng, distanceKm: Bill.distanceKm });
-    if (!res.ok) {
-      if (res.reason === 'already-registered') toast('このお札はもう登録しています');
-      else toast('登録できませんでした（時間をおいて試してください）');
-      sfx.error();
-      return;
-    }
-    outcome = res;
-  } else {
-    outcome = { ok: true, first: true, offline: true };
-  }
+  if (outcome.comeback && !dex.found.kaiki) dex.found.kaiki = Date.now();
+  if (newRare.length || outcome.comeback) saveDex();
 
   upsertMine(key, state.muniCode, outcome);
   if (settings.guided < 2) { settings.guided++; saveSettings(); $('guide').hidden = settings.guided >= 2; }
+  state.flaggedIdx = [];
   showResult({ key, parsed, denom: state.denom, muniCode: state.muniCode, rareHits, feature, outcome });
 }
 
 function upsertMine(key, muniCode, outcome) {
   let entry = mine.bills.find((b) => b.key === key);
   if (!entry) {
-    entry = { key, muni: muniCode, at: Date.now(), seen: outcome.n || 1, rare: [], km: 0 };
+    entry = { key, muni: muniCode, at: Date.now(), seen: outcome.n || 1, rare: [], km: 0, comebacks: 0 };
     mine.bills.unshift(entry);
   } else {
     entry.muni = muniCode;
@@ -299,6 +344,7 @@ function upsertMine(key, muniCode, outcome) {
     entry.seen = outcome.n || entry.seen;
     if (outcome.km) entry.km = (entry.km || 0) + outcome.km;
   }
+  if (outcome.comeback) entry.comebacks = (entry.comebacks || 0) + 1;
   if (mine.bills.length > 1000) mine.bills.length = 1000;
   saveMine();
 }
@@ -312,7 +358,26 @@ function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }
   body.replaceChildren();
   const add = (tag, cls, text) => { const e = el(tag, cls, text); body.appendChild(e); return e; };
 
-  if (outcome.first) {
+  let loopLatLngs = null;
+  if (outcome.comeback) {
+    sfx.rare(); // おかえりは、レア番号と同じきらっとした音にする
+    const loop = outcome.loop || [];
+    loopLatLngs = loop.map((p) => muniLatLng(p.muni)).filter(Boolean);
+    const totalKm = Bill.sumPathKm(loopLatLngs, Bill.distanceKm);
+    if (outcome.handsBetween > 0) {
+      add('h2', null, 'おかえりなさい');
+      add('p', null, `${outcome.handsBetween} 人の手を渡って戻ってきました`);
+      const b = document.createElement('b');
+      b.textContent = `${Bill.formatDuration(Date.now() - outcome.prevAt)}で ${totalKm} km`;
+      const p = add('p', null, null);
+      p.appendChild(b);
+      p.append(' の旅でした');
+    } else {
+      add('h2', null, 'おかえりなさい');
+      add('p', null, `${Bill.formatDuration(Date.now() - outcome.prevAt)}ぶりに戻ってきました`);
+      add('p', 'muted', '紙幣リレーを使っていない人の手も渡ってきたのかもしれません。');
+    }
+  } else if (outcome.first) {
     sfx.firstRegister();
     add('h2', null, '登録しました');
     add('p', null, `ここから旅が始まります — ${muniLabel(muniCode)}`);
@@ -336,12 +401,20 @@ function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }
     sfx.rare();
     for (const r of rareHits) add('p', 'rare-hit', `✨ ${r.name}（${r.odds}）`);
     if (rareHits.some((r) => !dex.found[r.id])) sfx.dexComplete();
-  } else if (feature) {
+  } else if (feature && !outcome.comeback) {
     add('p', 'muted', feature);
   }
   add('p', 'muted', `${formatSerial(parsed)}（${DENOM_LABEL[denom]}）`);
 
-  if (here) {
+  if (outcome.comeback && loopLatLngs && loopLatLngs.length > 1) {
+    const mapHost = document.createElement('div');
+    mapHost.className = 'map-host';
+    body.appendChild(mapHost);
+    Map.mountMap(mapHost).then((svg) => {
+      for (let i = 1; i < loopLatLngs.length; i++) Map.addLine(svg, loopLatLngs[i - 1], loopLatLngs[i]);
+      loopLatLngs.forEach((p, i) => Map.addPoint(svg, p, { self: i === loopLatLngs.length - 1 }));
+    });
+  } else if (here) {
     const mapHost = document.createElement('div');
     mapHost.className = 'map-host';
     body.appendChild(mapHost);
@@ -456,10 +529,11 @@ async function openCamera() {
         video: $('cam-video'),
         canvas: $('cam-canvas'),
         denom: () => state.denom,
-        onMatch: (serial) => {
+        onMatch: (serial, cand) => {
           sfx.camHit();
           if (navigator.vibrate) navigator.vibrate(30);
           state.buffer = serial;
+          state.flaggedIdx = Bill.flagIndices(cand);
           closeCameraView();
           renderSerial();
           toast('読み取った番号です。お札と見比べてください');
@@ -467,7 +541,7 @@ async function openCamera() {
         onTimeout: (partial) => {
           sfx.camMiss();
           closeCameraView();
-          if (partial) state.buffer = partial;
+          if (partial) { state.buffer = partial; state.flaggedIdx = []; }
           renderSerial();
           toast('読み取れませんでした。明るい所で・お札を平らに・枠いっぱいに');
         },
@@ -507,7 +581,12 @@ $('cam-file').addEventListener('change', async (e) => {
   const w = await Cam.ensureWorker();
   const { data } = await w.recognize(canvas);
   const cand = Bill.extractSerialCandidate(data.text || '');
-  if (cand) { state.buffer = `${cand.prefix}${cand.digits}${cand.suffix}`; renderSerial(); toast('読み取った番号です。お札と見比べてください'); }
+  if (cand) {
+    state.buffer = `${cand.prefix}${cand.digits}${cand.suffix}`;
+    state.flaggedIdx = Bill.flagIndices(cand);
+    renderSerial();
+    toast('読み取った番号です。お札と見比べてください');
+  }
   else toast('読み取れませんでした。キーパッドで打ってください');
   e.target.value = '';
 });
@@ -554,8 +633,9 @@ function renderMine() {
 
   const dexHost = $('mine-dex');
   dexHost.replaceChildren();
-  const NAMES = { zorome: 'ゾロ目', kiriban: 'キリ番', wakai: '若い番号', kaidan: '階段', kagami: '鏡', kurikaeshi: 'くり返し', zorozoro: 'ぞろぞろ', eiji: '英字もそろう' };
-  for (const id of Bill.RARE_IDS) {
+  const NAMES = { zorome: 'ゾロ目', kiriban: 'キリ番', wakai: '若い番号', kaidan: '階段', kagami: '鏡', kurikaeshi: 'くり返し', zorozoro: 'ぞろぞろ', eiji: '英字もそろう', kaiki: '戻ってきたお札' };
+  // 「戻ってきたお札」はレア番号と同じ図鑑の枠に、記番号の並びとは別の枠として並べる
+  for (const id of [...Bill.RARE_IDS, 'kaiki']) {
     dexHost.appendChild(el('div', `slot ${dex.found[id] ? 'got' : 'pending'}`, NAMES[id] || id));
   }
 
@@ -565,7 +645,8 @@ function renderMine() {
   listHost.replaceChildren();
   for (const b of sorted) {
     const row = el('div', 'bill-row');
-    row.appendChild(el('span', null, muniLabel(b.muni) || ''));
+    const label = b.comebacks ? `${muniLabel(b.muni) || ''} ・おかえり×${b.comebacks}` : (muniLabel(b.muni) || '');
+    row.appendChild(el('span', null, label));
     row.appendChild(el('span', 'muted', `${b.km || 0} km`));
     row.addEventListener('click', () => openJourney(b.key));
     listHost.appendChild(row);
@@ -619,7 +700,8 @@ async function renderEveryone() {
   }
   for (const h of hits.rows) {
     const row = el('div', 'hit-row');
-    row.appendChild(el('span', null, `${muniLabel(h.from) || ''} → ${muniLabel(h.to) || ''}`));
+    const label = h.comeback ? `🔁 ${muniLabel(h.from) || ''} → ${muniLabel(h.to) || ''}` : `${muniLabel(h.from) || ''} → ${muniLabel(h.to) || ''}`;
+    row.appendChild(el('span', null, label));
     row.appendChild(el('span', 'muted', `${h.km} km・${Bill.formatDuration(h.mins * 60000)}`));
     listHost.appendChild(row);
   }
@@ -631,12 +713,10 @@ $('btn-settings').addEventListener('click', openSettings);
 $('btn-settings-close').addEventListener('click', () => $('settings-view').hidden = true);
 function openSettings() {
   $('opt-sound').checked = settings.sound;
-  $('opt-confirm').checked = settings.confirm;
   $('opt-input').value = settings.input;
   $('settings-view').hidden = false;
 }
 $('opt-sound').addEventListener('change', (e) => { settings.sound = e.target.checked; setSoundOn(settings.sound); saveSettings(); });
-$('opt-confirm').addEventListener('change', (e) => { settings.confirm = e.target.checked; saveSettings(); });
 $('opt-input').addEventListener('change', (e) => { settings.input = e.target.value; saveSettings(); });
 
 const PRIVACY_TEXT = `カメラの映像は端末の中で文字を読むためだけに使い、送らず、残しません。

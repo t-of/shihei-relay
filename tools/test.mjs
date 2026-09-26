@@ -6,8 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseSerial, seriesFor, colorsFor, buildKey, normalize, nextKind,
-  correctDigit, extractSerialCandidate, rareChecks, smallFeature,
+  correctDigit, extractSerialCandidate, flagIndices, rareChecks, smallFeature,
   distanceKm, formatDuration, isMuniCode,
+  sightingDocId, parseSightingDocId, analyzeRegistration, sumPathKm,
+  RETURN_MIN_GAP_MS, MAX_RETURN_N,
 } from '../js/bill.js';
 
 // ---- 形の正しい例・間違った例 ----
@@ -233,4 +235,112 @@ test('合成した記番号（読み違いつき）から正しい記番号を�
     assert.equal(serial, expect, raw);
     assert.equal(parseSerial(serial, denom).ok, true, serial);
   }
+});
+
+// ---- 確認画面の色分け（撮影で読んだ文字のうち、直した・あやしい文字） ----
+
+test('flagIndices: 数字を直した場所・英字があやしい場所を、記番号全体の位置にまとめる', () => {
+  // "PF O83456VW" のような読みで、O→0 に直り、末尾側の文字が数字化けしている想定
+  const cand = { prefix: 'PF', digits: '083456', suffix: 'VW', suspicious: [], corrected: [1] };
+  assert.deepEqual(flagIndices(cand), [3]); // prefix(2) + corrected 位置 1 → 全体で 3
+});
+test('flagIndices: suffix 側のあやしい英字は、数字 6 桁ぶん後ろにずれる', () => {
+  const cand = { prefix: 'AB', digits: '123456', suffix: '7D', suspicious: [3], corrected: [] };
+  // letters = [A,B,7,D]。i=3（D）は suffix の 2 文字目 → 全体では 2(prefix)+6(digits)+1 = 9
+  assert.deepEqual(flagIndices(cand), [9]);
+});
+test('flagIndices: cand が無ければ空', () => {
+  assert.deepEqual(flagIndices(null), []);
+});
+
+// ---- 「前に登録したか」「戻ってきたか」の判定 ----
+
+const H = 3600 * 1000;
+const T0 = 1_700_000_000_000;
+
+test('自分だけ（初めての登録）: 前の登録はない', () => {
+  const a = analyzeRegistration([], 'u1', T0);
+  assert.equal(a.alreadyMine, false);
+  assert.equal(a.nextN, 0);
+  assert.equal(a.atLimit, false);
+  assert.equal(a.tooSoon, false);
+  assert.equal(a.sinceLastMs, null);
+});
+
+test('自分→自分（3 時間以内）: 前の登録からまだ時間がたっていない', () => {
+  const entries = [{ id: 'u1', at: T0 }];
+  const a = analyzeRegistration(entries, 'u1', T0 + 1 * H);
+  assert.equal(a.alreadyMine, true);
+  assert.equal(a.handsBetween, 0);
+  assert.equal(a.nextN, 1);
+  assert.equal(a.tooSoon, true);
+});
+
+test('自分→自分（3 時間後）: 戻ってきたと聞ける（間に他の人はいない）', () => {
+  const entries = [{ id: 'u1', at: T0 }];
+  const a = analyzeRegistration(entries, 'u1', T0 + 4 * H);
+  assert.equal(a.alreadyMine, true);
+  assert.equal(a.handsBetween, 0);
+  assert.equal(a.tooSoon, false);
+  assert.equal(a.nextN, 1);
+});
+
+test('自分→他→自分: 1 人の手を渡って戻ってきた', () => {
+  const entries = [{ id: 'u1', at: T0 }, { id: 'u2', at: T0 + H }];
+  const a = analyzeRegistration(entries, 'u1', T0 + 10 * H);
+  assert.equal(a.alreadyMine, true);
+  assert.equal(a.handsBetween, 1);
+  assert.equal(a.nextN, 1);
+  assert.equal(a.tooSoon, false);
+});
+
+test('自分→他→他→自分: 2 人の手を渡った', () => {
+  const entries = [{ id: 'u1', at: T0 }, { id: 'u2', at: T0 + H }, { id: 'u3', at: T0 + 2 * H }];
+  const a = analyzeRegistration(entries, 'u1', T0 + 10 * H);
+  assert.equal(a.handsBetween, 2);
+});
+
+test('戻ってきたあと、また戻ってきた（n が積み上がる）', () => {
+  const entries = [
+    { id: 'u1', at: T0 }, { id: 'u2', at: T0 + H },
+    { id: 'u1_1', at: T0 + 10 * H }, { id: 'u2', at: T0 + 20 * H },
+  ];
+  const a = analyzeRegistration(entries, 'u1', T0 + 30 * H);
+  assert.equal(a.nextN, 2);
+  assert.equal(a.handsBetween, 1);
+});
+
+test('1 枚に書けるのは最大 4 件（n=0〜3）。使い切ったら atLimit', () => {
+  const entries = [
+    { id: 'u1', at: T0 }, { id: 'u1_1', at: T0 + 10 * H }, { id: 'u1_2', at: T0 + 20 * H }, { id: 'u1_3', at: T0 + 30 * H },
+  ];
+  const a = analyzeRegistration(entries, 'u1', T0 + 40 * H);
+  assert.equal(a.nextN, 4);
+  assert.equal(a.atLimit, true);
+});
+
+test('MAX_RETURN_N・RETURN_MIN_GAP_MS の値', () => {
+  assert.equal(MAX_RETURN_N, 3);
+  assert.equal(RETURN_MIN_GAP_MS, 3 * H);
+});
+
+test('sightingDocId・parseSightingDocId は行って戻れる', () => {
+  assert.equal(sightingDocId('abc', 0), 'abc');
+  assert.equal(sightingDocId('abc', 2), 'abc_2');
+  assert.deepEqual(parseSightingDocId('abc'), { uid: 'abc', n: 0 });
+  assert.deepEqual(parseSightingDocId('abc_2'), { uid: 'abc', n: 2 });
+});
+
+// ---- 道のりの合計距離（一周の線の km） ----
+
+test('sumPathKm: 区間の距離をそのまま足す', () => {
+  const tokyo = { lat: 35.681, lng: 139.767 };
+  const nagoya = { lat: 35.170, lng: 136.881 };
+  const osaka = { lat: 34.702, lng: 135.495 };
+  const total = sumPathKm([tokyo, nagoya, osaka]);
+  const expect = distanceKm(tokyo.lat, tokyo.lng, nagoya.lat, nagoya.lng) + distanceKm(nagoya.lat, nagoya.lng, osaka.lat, osaka.lng);
+  assert.equal(total, expect);
+});
+test('sumPathKm: 1 点だけなら 0', () => {
+  assert.equal(sumPathKm([{ lat: 0, lng: 0 }]), 0);
 });

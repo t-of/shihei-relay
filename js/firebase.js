@@ -6,6 +6,8 @@
 //
 // データの形は README の「## データ」と firestore.rules を正本とする。ここを変えたら両方直す。
 
+import * as Bill from './bill.js';
+
 const FIREBASE_VERSION = '12.19.0';
 const CDN = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}`;
 
@@ -48,15 +50,23 @@ async function init() {
 }
 
 /**
- * お札を 1 枚登録する。sightings・users・（再発見なら）hits を 1 つのバッチで書く。
+ * お札を 1 枚登録する。sightings・users・（前に誰かの登録があれば）hits を 1 つのバッチで書く。
  * 距離・時間の計算に市区町村の緯度経度が要るので、呼び出し側（app.js）が
  * `muniLatLng(code) => { lat, lng } | null` と `distanceKm(lat1,lng1,lat2,lng2) => number` を渡す
  * （js/geo.js・js/bill.js のものをそのまま渡せる）。
  *
- * @returns {Promise<{ ok:true, first:boolean, prevMuni?:string, prevAt?:number, km?:number, mins?:number, n?:number }
- *          | { ok:false, reason:string }>}
+ * 前にも自分（同じ uid）がこのお札を登録していたときは、まず `confirmedReturn` なしで呼ぶ。
+ *   - `reason: 'too-soon'`      前の自分の登録から `Bill.RETURN_MIN_GAP_MS`（3 時間）経っていない。登録させない。
+ *   - `reason: 'return-limit'` もう 4 件（n=0〜3）使い切っている。登録させない。
+ *   - `reason: 'ask-return'`   「また手元に来ましたか？」を聞く。「戻ってきた」を選んだら
+ *                              `confirmedReturn: true` でもう一度呼ぶ（間にほかの人がいてもいなくてもよい。
+ *                              紙幣リレーを使っていない人の手を渡ってきたこともあるため）。
+ *
+ * @returns {Promise<{ ok:true, first:boolean, comeback:boolean, handsBetween?:number, loop?:{muni:string,at:number}[],
+ *            prevMuni?:string, prevAt?:number, km?:number, mins?:number, n?:number }
+ *          | { ok:false, reason:string, lastMuni?:string, lastAt?:number, sinceLastMs?:number }>}
  */
-export async function registerSighting(key, muniCode, { muniLatLng, distanceKm } = {}) {
+export async function registerSighting(key, muniCode, { muniLatLng, distanceKm } = {}, confirmedReturn = false) {
   const f = await ready();
   if (!f) return notConfigured();
   const { db, auth, storeMod: s } = f;
@@ -68,14 +78,24 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
     // ponytail: rules が 1 回の list を 100 件までに制限しているので、100 人を超えたお札は
     // 人数（n）が頭打ちになる。それだけ動いたお札を気にする段階になったら別の数え方に上げる。
     const allSnap = await s.getDocs(s.query(sightingsRef, s.orderBy('at', 'asc'), s.limit(100)));
-    if (allSnap.docs.some((d) => d.id === uid)) return { ok: false, reason: 'already-registered' };
-    const prevDoc = allSnap.docs[allSnap.docs.length - 1];
-    const prev = prevDoc ? prevDoc.data() : null;
-    const n = allSnap.size + 1;
+    const now = Date.now();
+    const entries = allSnap.docs.map((d) => ({ id: d.id, at: toMillis(d.data().at), muni: d.data().muni }));
+
+    const analysis = Bill.analyzeRegistration(entries, uid, now);
+    if (analysis.alreadyMine) {
+      const last = entries[analysis.lastMineIndex];
+      if (analysis.atLimit) return { ok: false, reason: 'return-limit', lastMuni: last.muni, lastAt: last.at };
+      if (analysis.tooSoon) return { ok: false, reason: 'too-soon', lastMuni: last.muni, lastAt: last.at, sinceLastMs: analysis.sinceLastMs };
+      if (!confirmedReturn) return { ok: false, reason: 'ask-return', lastMuni: last.muni, lastAt: last.at, handsBetween: analysis.handsBetween };
+    }
+
+    const docId = Bill.sightingDocId(uid, analysis.nextN);
+    const prev = entries.length ? entries[entries.length - 1] : null; // 直前の登録（自分でも他人でもよい）
+    const n = entries.length + 1;
+    const comeback = analysis.alreadyMine; // ここまで来たら confirmedReturn 済み・時間もあいている
 
     const batch = s.writeBatch(db);
-    const now = Date.now();
-    batch.set(s.doc(db, 'bills', key, 'sightings', uid), { muni: muniCode, at: s.serverTimestamp(), v: 1 });
+    batch.set(s.doc(db, 'bills', key, 'sightings', docId), { muni: muniCode, at: s.serverTimestamp(), v: 1 });
 
     const userRef = s.doc(db, 'users', uid);
     const userSnap = await s.getDoc(userRef);
@@ -92,18 +112,25 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
     if (prev) {
       const a = muniLatLng?.(prev.muni), b = muniLatLng?.(muniCode);
       if (a && b && distanceKm) km = distanceKm(a.lat, a.lng, b.lat, b.lng);
-      mins = Math.max(0, Math.round((now - toMillis(prev.at)) / 60000));
+      mins = Math.max(0, Math.round((now - prev.at) / 60000));
       const hitsRef = s.doc(s.collection(db, 'hits'));
       batch.set(hitsRef, {
         denom: Number(key.match(/\d+/)?.[0] || 0),
-        from: prev.muni, to: muniCode, km, mins, n,
+        from: prev.muni, to: muniCode, km, mins, n, comeback,
         at: s.serverTimestamp(), v: 1,
       });
     }
     await batch.commit();
-    return prev
-      ? { ok: true, first: false, prevMuni: prev.muni, prevAt: toMillis(prev.at), km, mins, n }
-      : { ok: true, first: true };
+
+    if (!prev) return { ok: true, first: true, comeback: false };
+    const out = { ok: true, first: false, comeback, prevMuni: prev.muni, prevAt: prev.at, km, mins, n };
+    if (comeback) {
+      out.handsBetween = analysis.handsBetween;
+      // 一周の線・合計距離用: 自分の前の登録から、今回までの市区町村の並び
+      out.loop = entries.slice(analysis.lastMineIndex).map((e) => ({ muni: e.muni, at: e.at }));
+      out.loop.push({ muni: muniCode, at: now });
+    }
+    return out;
   } catch (e) {
     console.error('register failed', e);
     return { ok: false, reason: String(e?.code || e) };

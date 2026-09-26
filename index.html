@@ -131,16 +131,29 @@
     </div>
   </div>
 
-  <!-- ============ 確かめのカード ============ -->
+  <!-- ============ 確かめのカード（必ず出す） ============ -->
   <div class="sheet" id="confirm-sheet" hidden>
     <div class="sheet__body">
-      <h2>登録します</h2>
-      <p id="confirm-text"></p>
-      <p class="confirm-note">登録した市区町村と日時は、このお札を手にした人に見えます。</p>
-      <label class="confirm-toggle"><input type="checkbox" id="confirm-skip"> 次から確かめない</label>
+      <h2>記番号を確かめてください</h2>
+      <p class="confirm-prior" id="confirm-prior" hidden></p>
+      <div class="confirm-serial" id="confirm-serial"></div>
+      <p id="confirm-meta"></p>
+      <p class="confirm-note">お札と見比べてください。登録した市区町村と日時は、このお札を手にした人に見えます。</p>
       <div class="sheet__row">
-        <button class="ghost" id="btn-confirm-cancel">やめる</button>
-        <button class="primary" id="btn-confirm-ok">登録する</button>
+        <button class="ghost" id="btn-confirm-cancel">直す</button>
+        <button class="primary" id="btn-confirm-ok">合っている、登録する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 前に登録していたとき ============ -->
+  <div class="sheet" id="ask-return-sheet" hidden>
+    <div class="sheet__body">
+      <h2>また手元に来ましたか？</h2>
+      <p id="ask-return-text"></p>
+      <div class="sheet__row">
+        <button class="ghost" id="btn-return-no">打ち間違い・同じ登録</button>
+        <button class="primary" id="btn-return-yes">戻ってきた</button>
       </div>
     </div>
   </div>
@@ -176,7 +189,6 @@
     <button class="cam-close" id="btn-settings-close" aria-label="閉じる">✕</button>
     <h2>設定・情報</h2>
     <label class="row"><span>音</span><input type="checkbox" id="opt-sound"></label>
-    <label class="row"><span>登録前の確かめ</span><input type="checkbox" id="opt-confirm"></label>
     <label class="row"><span>はじめに開く</span>
       <select id="opt-input">
         <option value="pad">キーパッド</option>

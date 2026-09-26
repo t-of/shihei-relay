@@ -295,7 +295,22 @@ a { color: inherit; }
 .place-candidates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .place-candidates li button { width: 100%; text-align: left; padding: 10px; border-radius: 8px; background: var(--bg); }
 .confirm-note { font-size: 12px; color: var(--muted); }
-.confirm-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.confirm-prior {
+  margin: 0; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255, 211, 92, 0.12); color: var(--accent); font-size: 13px;
+}
+/* 確認画面の大きな記番号。直した・あやしい文字は色を変えたまま出す */
+.confirm-serial {
+  display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
+  font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+}
+.cbox {
+  min-width: 22px; padding: 6px 4px; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--line);
+  font-size: 22px; font-weight: 700; text-align: center;
+}
+.cbox--flag { color: var(--danger); border-color: var(--danger); }
+#confirm-meta { margin: 0; text-align: center; color: var(--muted); font-size: 13px; }
 .sheet__row { display: flex; gap: 8px; }
 .sheet__row .primary, .sheet__row .ghost { flex: 1; padding: 12px; border-radius: 10px; }
 .primary { background: var(--accent); color: var(--accent-fg); font-weight: 700; }

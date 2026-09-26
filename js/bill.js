@@ -155,6 +155,9 @@ export function extractSerialCandidate(rawOcrText) {
       if (digits.some((d) => d === null)) continue;
       const before = s.slice(0, start);
       const after = s.slice(start + 6);
+      // 直した数字の場所（元の文字と違っていた桁）。確認画面で色を変えて出す
+      const corrected = [];
+      [...digitsWindow].forEach((ch, i) => { if (ch !== digits[i]) corrected.push(i); });
       for (const plen of [2, 1]) {
         for (const slen of [2, 1]) {
           if (before.length < plen || after.length < slen) continue;
@@ -167,12 +170,27 @@ export function extractSerialCandidate(rawOcrText) {
             if (!ALPHABET.includes(ch)) { suspicious.push(i); if (/[0-9]/.test(ch)) return; bad = true; }
           });
           if (bad) continue;
-          return { prefix, digits: digits.join(''), suffix, suspicious };
+          return { prefix, digits: digits.join(''), suffix, suspicious, corrected };
         }
       }
     }
   }
   return null;
+}
+
+/**
+ * extractSerialCandidate が返す suspicious（英字部分の場所）・corrected（数字部分の場所）を、
+ * 「prefix + digits + suffix」を並べた記番号全体の中の場所（0 始まり）にまとめる。
+ * 確認画面で、直した・あやしい文字だけ色を変えて出すのに使う。
+ */
+export function flagIndices(cand) {
+  if (!cand) return [];
+  const { prefix, suspicious = [], corrected = [] } = cand;
+  const out = new Set();
+  // letters = [...prefix, ...suffix]。suffix 側（i >= prefix.length）は、間に数字 6 桁が挟まる分だけ後ろへずらす
+  for (const i of suspicious) out.add(i < prefix.length ? i : i + 6);
+  for (const i of corrected) out.add(prefix.length + i);
+  return [...out].sort((a, b) => a - b);
 }
 
 // ---- レア番号の判定（端末の中だけ） ----
@@ -254,4 +272,74 @@ export function formatDuration(ms) {
 /** 市区町村コードの形（5 桁、頭 2 桁が 01〜47） */
 export function isMuniCode(code) {
   return /^[0-9]{5}$/.test(code) && Number(code.slice(0, 2)) >= 1 && Number(code.slice(0, 2)) <= 47;
+}
+
+// ---- 「前に登録したか」「戻ってきたか」の判定 ----
+//
+// 1 枚のお札に、同じ人（uid）が複数回登録できるのは「戻ってきた」ときだけ。
+// 文書の id は最初が `{uid}`（n=0）、戻ってきたときは `{uid}_{n}`（n=1,2,3）。
+// 1 人が書けるのは最大 4 件（n=0〜3）まで。
+
+export const RETURN_MIN_GAP_MS = 3 * 3600 * 1000; // 前の自分の登録から、これだけ空けないと「戻ってきた」を選べない
+export const MAX_RETURN_N = 3;
+
+const RETURN_ID_RE = /^([^_]+)_([1-3])$/;
+
+/** 文書の id を組み立てる。n=0（最初の登録）は uid そのまま */
+export function sightingDocId(uid, n) {
+  return n > 0 ? `${uid}_${n}` : uid;
+}
+
+/** 文書の id から uid と n を取り出す（形が違えば n=0 として uid をそのまま返す） */
+export function parseSightingDocId(id) {
+  const m = String(id).match(RETURN_ID_RE);
+  if (m) return { uid: m[1], n: Number(m[2]) };
+  return { uid: String(id), n: 0 };
+}
+
+/**
+ * このお札に対して、いま登録しようとしている人（uid）が前にも登録しているか、
+ * 何人の手を渡ったか、次に書ける文書の id はどれかを判定する。
+ * @param {{ id: string, at: number }[]} entries そのお札の sightings。at の昇順（古い順）
+ * @param {string} uid いま登録しようとしている人
+ * @param {number} now 現在時刻（ms）。テストのため引数で受け取れるようにしてある
+ * @returns {{
+ *   alreadyMine: boolean,        前にもこの人が登録しているか
+ *   lastMineIndex: number,       その最後の登録の位置（無ければ -1）
+ *   handsBetween: number,        その登録のあと、他の人が何回登録したか（＝渡った手の数）
+ *   nextN: number,               次に登録するときの n
+ *   atLimit: boolean,            もう 4 件目（n=0〜3）を使い切っている
+ *   sinceLastMs: number | null,  前の自分の登録からの経過（ms）。alreadyMine が false なら null
+ *   tooSoon: boolean,            前の自分の登録から RETURN_MIN_GAP_MS だけ経っていない
+ * }}
+ */
+export function analyzeRegistration(entries, uid, now = Date.now()) {
+  let lastMineIndex = -1;
+  let maxN = -1;
+  entries.forEach((e, i) => {
+    const p = parseSightingDocId(e.id);
+    if (p.uid === uid) { lastMineIndex = i; if (p.n > maxN) maxN = p.n; }
+  });
+  const alreadyMine = lastMineIndex !== -1;
+  const handsBetween = alreadyMine ? entries.length - 1 - lastMineIndex : 0;
+  const nextN = alreadyMine ? maxN + 1 : 0;
+  const sinceLastMs = alreadyMine ? now - entries[lastMineIndex].at : null;
+  return {
+    alreadyMine,
+    lastMineIndex,
+    handsBetween,
+    nextN,
+    atLimit: nextN > MAX_RETURN_N,
+    sinceLastMs,
+    tooSoon: alreadyMine && sinceLastMs < RETURN_MIN_GAP_MS,
+  };
+}
+
+/** 緯度経度の並びを、そのまま順に足した合計距離（km）。地図の一周の線・道のりの合計に使う */
+export function sumPathKm(points, distanceKmFn = distanceKm) {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += distanceKmFn(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
+  }
+  return total;
 }

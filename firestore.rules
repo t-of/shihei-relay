@@ -35,21 +35,53 @@ service cloud.firestore {
       return sinceOk && after.data.last == request.time && sinceWindow;
     }
 
-    match /bills/{key}/sightings/{uid} {
+    // sightings の文書 id は、最初の登録が {uid} そのもの、戻ってきたとき（2 件目以降）が
+    // {uid}_{n}（n は 1〜3）。1 人が 1 枚のお札に書けるのは、これで最大 4 件まで（js/bill.js と同じ形）。
+    function isOwnSightingDocId(docId) {
+      return docId == request.auth.uid || docId.matches('^' + request.auth.uid + '_[1-3]$');
+    }
+    // {uid}_{n} の直前の文書 id（n=1 なら {uid}、それ以外は {uid}_{n-1}）
+    function prevSightingDocId(docId) {
+      let n = int(docId.split('_')[1]);
+      return n == 1 ? request.auth.uid : (request.auth.uid + '_' + string(n - 1));
+    }
+    // 戻ってきたとき（{uid}_{n}）は、自分の直前の登録が存在し、そこから 3 時間あいていること。
+    // 「間にほかの人がいたか」は rules では見ない（紙幣リレーを使っていない人の手を渡って戻る
+    // こともあるため。アプリ側では聞いて確かめる）。
+    // ponytail: 悪意のあるクライアントが直接書いても、1 枚のお札につき最大 3 件（n=1〜3）・
+    // 3 時間おきという上限の中でしか「戻ってきた」を水増しできない。
+    function isReturnGapOk(key, docId) {
+      let prevPath = /databases/$(database)/documents/bills/$(key)/sightings/$(prevSightingDocId(docId));
+      return exists(prevPath) && request.time - get(prevPath).data.at > duration.value(3, 'h');
+    }
+
+    match /bills/{key}/sightings/{docId} {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 100;
 
+      // 最初の登録
       allow create: if signedIn()
-        && request.auth.uid == uid
+        && docId == request.auth.uid
         && isValidKey(key)
         && request.resource.data.keys().hasOnly(['muni', 'at', 'v'])
         && isMuniCode(request.resource.data.muni)
         && request.resource.data.at == request.time
         && request.resource.data.v == 1
-        && withinRate(uid);
+        && withinRate(request.auth.uid);
+
+      // 戻ってきたとき（2 件目以降）
+      allow create: if signedIn()
+        && docId.matches('^' + request.auth.uid + '_[1-3]$')
+        && isValidKey(key)
+        && request.resource.data.keys().hasOnly(['muni', 'at', 'v'])
+        && isMuniCode(request.resource.data.muni)
+        && request.resource.data.at == request.time
+        && request.resource.data.v == 1
+        && withinRate(request.auth.uid)
+        && isReturnGapOk(key, docId);
 
       allow update: if false;
-      allow delete: if signedIn() && request.auth.uid == uid;
+      allow delete: if signedIn() && isOwnSightingDocId(docId);
     }
 
     // bills 自体・sightings のコレクショングループでの一覧検索はしない（拒否のまま）
@@ -59,13 +91,14 @@ service cloud.firestore {
       allow get: if true;
 
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['denom', 'from', 'to', 'km', 'mins', 'n', 'at', 'v'])
+        && request.resource.data.keys().hasOnly(['denom', 'from', 'to', 'km', 'mins', 'n', 'at', 'v', 'comeback'])
         && request.resource.data.denom in [1000, 2000, 5000, 10000]
         && isMuniCode(request.resource.data.from)
         && isMuniCode(request.resource.data.to)
         && request.resource.data.km is int && request.resource.data.km >= 0 && request.resource.data.km <= 3000
         && request.resource.data.mins is int && request.resource.data.mins >= 0
         && request.resource.data.n is int && request.resource.data.n >= 2 && request.resource.data.n <= 1000
+        && request.resource.data.comeback is bool
         && request.resource.data.at == request.time
         && request.resource.data.v == 1
         && withinRate(request.auth.uid);
