@@ -98,7 +98,7 @@ service cloud.firestore {
         && request.resource.data.km is int && request.resource.data.km >= 0 && request.resource.data.km <= 3000
         && request.resource.data.mins is int && request.resource.data.mins >= 0
         && request.resource.data.n is int && request.resource.data.n >= 2 && request.resource.data.n <= 1000
-        && request.resource.data.comeback is bool
+        && (!('comeback' in request.resource.data) || request.resource.data.comeback is bool) // 前の版のアプリは comeback を送らない
         && request.resource.data.at == request.time
         && request.resource.data.v == 1
         && withinRate(request.auth.uid);
