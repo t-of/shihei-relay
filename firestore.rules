@@ -26,10 +26,11 @@ service cloud.firestore {
 
     // 24 時間で 50 回・前回から 30 秒あけているか（users/{uid} をバッチで一緒に更新している前提）
     function withinRate(uid) {
-      let before = get(/databases/$(database)/documents/users/$(uid));
-      let hadBefore = before != null && before.data.keys().hasAll(['last']);
-      let after = getAfter(/databases/$(database)/documents/users/$(uid));
-      let sinceOk = !hadBefore || request.time - before.data.last > duration.value(30, 's');
+      let path = /databases/$(database)/documents/users/$(uid);
+      // 初めての人は users/{uid} がまだ無い。無い文書を get するとエラーで拒否になるので、先に exists で見る
+      let hadBefore = exists(path) && get(path).data.keys().hasAll(['last']);
+      let after = getAfter(path);
+      let sinceOk = !hadBefore || request.time - get(path).data.last > duration.value(30, 's');
       let sinceWindow = after.data.since is timestamp
         && (request.time - after.data.since < duration.value(24, 'h') ? after.data.n <= 50 : true);
       return sinceOk && after.data.last == request.time && sinceWindow;
