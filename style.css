@@ -21,8 +21,9 @@
   --wak-accent: #8a2a1f;
   --wak-accent-fg: #fdf3e7;
 }
+/* 暗い配色。設定の「画面」で「スマホに合わせる」なら OS に従い、「明るい」「暗い」なら html[data-theme] で固定 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1a0f0c;
     --panel: #241512;
     --fg: #f5e9da;
@@ -44,6 +45,29 @@
     --wak-accent-fg: #3a140d;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #1a0f0c;
+  --panel: #241512;
+  --fg: #f5e9da;
+  --muted: #c2a892;
+  --accent: #ffd35c;
+  --accent-fg: #3a140d;
+  --danger: #ff8f6b;
+  --line: rgba(255, 233, 218, 0.12);
+  --tint: rgba(255, 233, 218, 0.08);
+  --map-land: color-mix(in srgb, var(--accent) 10%, transparent);
+  --map-edge: rgba(255, 233, 218, 0.15);
+  --dot: #ff7a5c;
+  --dot-self: #7fd6ff;
+  --wak-bg: #241512;
+  --wak-fg: #f5e9da;
+  --wak-muted: #c2a892;
+  --wak-line: rgba(255, 233, 218, 0.12);
+  --wak-accent: #ffd35c;
+  --wak-accent-fg: #3a140d;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 

@@ -1060,10 +1060,12 @@ $('btn-settings-close').addEventListener('click', () => $('settings-view').hidde
 function openSettings() {
   $('opt-sound').checked = settings.sound;
   $('opt-input').value = settings.input;
+  $('opt-theme').value = settings.theme || 'auto';
   $('settings-view').hidden = false;
 }
 $('opt-sound').addEventListener('change', (e) => { settings.sound = e.target.checked; setSoundOn(settings.sound); saveSettings(); });
 $('opt-input').addEventListener('change', (e) => { settings.input = e.target.value; saveSettings(); });
+$('opt-theme').addEventListener('change', (e) => { settings.theme = e.target.value; saveSettings(); applyTheme(settings.theme); });
 
 const TERMS_TEXT = `紙幣リレーは無料で使えます。使うと、次のことに同意したものとします。
 
