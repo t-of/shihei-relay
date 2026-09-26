@@ -409,7 +409,8 @@ a { color: inherit; }
 
 /* ---- 結果 ---- */
 
-.overlay--result { justify-content: center; align-items: center; text-align: center; gap: 16px; }
+/* safe: 中身が画面より長いとき、見出しが上に切れてスクロールでも戻れなくなるのを防ぐ（対応しない古いブラウザは前の行の center） */
+.overlay--result { justify-content: center; justify-content: safe center; align-items: center; text-align: center; gap: 16px; }
 .result-actions { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; }
 .result-actions button { padding: 12px; border-radius: 10px; width: 100%; }
 /* リレー（このお札を渡す人へ）と、広める（友だちへ）を見出しで区別する */
