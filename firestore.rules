@@ -1,0 +1,85 @@
+rules_version = '2';
+
+// 紙幣リレー — Firestore セキュリティルール
+// Firebase コンソール > Firestore Database > ルール に貼り付けて「公開」する（README の「Firebase の準備」）。
+// 形はここが正本。README の「## データ」と合わせて直す。
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // key = <号券><券種><色>-<記番号> の形と、券種・色・号券・記番号の組み合わせが正しいか。
+    // js/bill.js の parseSerial・COLORS と同じ組み合わせだけを許す。
+    // ponytail: 数字 6 桁が 000001〜900000 の範囲かまでは正規表現では見ていない
+    // （000000・900001 以上は rules の外の値なので、app 側で弾いていれば実害はない）。
+    // 数字の範囲まで rules で締めたくなったら、6 桁を 1 桁ずつ書いた正規表現に置き換える。
+    function isValidKey(key) {
+      return key.matches('^F(10000|5000|1000)K-[A-HJ-NP-Z]{2}[0-9]{6}[A-HJ-NP-Z]{2}$')
+          || key.matches('^E(10000|5000)[KB]-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^E1000[KBN]-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$')
+          || key.matches('^D2000K-[A-HJ-NP-Z]{1,2}[0-9]{6}[A-HJ-NP-Z]$');
+    }
+
+    function signedIn() { return request.auth != null; }
+    function isMuniCode(m) {
+      return m is string && m.matches('^[0-9]{5}$') && int(m[0:2]) >= 1 && int(m[0:2]) <= 47;
+    }
+
+    // 24 時間で 50 回・前回から 30 秒あけているか（users/{uid} をバッチで一緒に更新している前提）
+    function withinRate(uid) {
+      let before = get(/databases/$(database)/documents/users/$(uid));
+      let hadBefore = before != null && before.data.keys().hasAll(['last']);
+      let after = getAfter(/databases/$(database)/documents/users/$(uid));
+      let sinceOk = !hadBefore || request.time - before.data.last > duration.value(30, 's');
+      let sinceWindow = after.data.since is timestamp
+        && (request.time - after.data.since < duration.value(24, 'h') ? after.data.n <= 50 : true);
+      return sinceOk && after.data.last == request.time && sinceWindow;
+    }
+
+    match /bills/{key}/sightings/{uid} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 100;
+
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && isValidKey(key)
+        && request.resource.data.keys().hasOnly(['muni', 'at', 'v'])
+        && isMuniCode(request.resource.data.muni)
+        && request.resource.data.at == request.time
+        && request.resource.data.v == 1
+        && withinRate(uid);
+
+      allow update: if false;
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // bills 自体・sightings のコレクショングループでの一覧検索はしない（拒否のまま）
+
+    match /hits/{id} {
+      allow list: if request.query.limit <= 20;
+      allow get: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['denom', 'from', 'to', 'km', 'mins', 'n', 'at', 'v'])
+        && request.resource.data.denom in [1000, 2000, 5000, 10000]
+        && isMuniCode(request.resource.data.from)
+        && isMuniCode(request.resource.data.to)
+        && request.resource.data.km is int && request.resource.data.km >= 0 && request.resource.data.km <= 3000
+        && request.resource.data.mins is int && request.resource.data.mins >= 0
+        && request.resource.data.n is int && request.resource.data.n >= 2 && request.resource.data.n <= 1000
+        && request.resource.data.at == request.time
+        && request.resource.data.v == 1
+        && withinRate(request.auth.uid);
+
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['last', 'since', 'n', 'v'])
+        && request.resource.data.last == request.time
+        && request.resource.data.v == 1;
+    }
+  }
+}

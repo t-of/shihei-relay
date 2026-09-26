@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#10151a"/>
+  <!-- relay route: a path of hand-offs from a quiet start to a bright arrival -->
+  <path d="M 88 424 Q 150 372 198 344" fill="none" stroke="#2d5750" stroke-width="17" stroke-linecap="round"/>
+  <path d="M 198 344 Q 262 306 308 258" fill="none" stroke="#42917f" stroke-width="17" stroke-linecap="round"/>
+  <path d="M 308 258 Q 360 204 408 146" fill="none" stroke="#5cc9b4" stroke-width="17" stroke-linecap="round"/>
+  <!-- waypoints (hands the note passed through) -->
+  <circle cx="88" cy="424" r="15" fill="#25443f"/>
+  <circle cx="198" cy="344" r="17" fill="#3f8f80"/>
+  <circle cx="308" cy="258" r="20" fill="#5cc9b4"/>
+  <!-- arrival: bright node with a quiet pulse ring, marked like a stamped label -->
+  <circle cx="410" cy="140" r="54" fill="none" stroke="#ffd35c" stroke-opacity="0.25" stroke-width="10"/>
+  <circle cx="410" cy="140" r="35" fill="#ffd35c"/>
+  <circle cx="410" cy="140" r="35" fill="none" stroke="#10151a" stroke-width="4" stroke-dasharray="4 9"/>
+</svg>

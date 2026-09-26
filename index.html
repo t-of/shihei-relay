@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10151a">
+  <meta name="description" content="お札の記番号と場所を登録して、紙幣の行方を追跡。同じお札が見つかれば移動の道のりが分かる。レア番号も判定。">
+  <title>紙幣リレー — 記番号でお札の行方をたどる</title>
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="紙幣リレー">
+  <meta property="og:title" content="紙幣リレー — 記番号でお札の行方をたどる">
+  <meta property="og:description" content="お札の記番号と場所を登録して、紙幣の行方を追跡。同じお札が見つかれば移動の道のりが分かる。レア番号も判定。">
+  <meta property="og:url" content="https://t-of.github.io/shihei-relay/">
+  <meta property="og:image" content="https://t-of.github.io/shihei-relay/icons/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="ja_JP">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- apple-mobile-web-app-status-bar-style は付けない（black-translucent だと iOS 26 で上部が隠れる） -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="紙幣リレー">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+
+  <link rel="stylesheet" href="./webapp-kit/webapp-kit.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="bar">
+      <h1 class="bar__title">紙幣リレー</h1>
+      <div class="bar__actions">
+        <button class="pill" data-wak="install" hidden>アプリにする</button>
+        <button class="pill" data-wak="share">共有</button>
+        <button class="icon-btn" id="btn-settings" aria-label="設定">⚙</button>
+      </div>
+    </header>
+
+    <!-- 記番号が届いたリレーのお札の帯 -->
+    <p class="relay-banner" id="relay-banner" hidden>🎁 リレーのお札が届きました</p>
+
+    <!-- ============ 登録（入力） ============ -->
+    <section class="view" data-view="input">
+      <div class="guide" id="guide" hidden>
+        <ol class="guide__steps">
+          <li>① お札を 1 枚出す</li>
+          <li>② 記番号を撮るか打つ</li>
+          <li>③ 登録</li>
+        </ol>
+        <svg class="guide__fig" viewBox="0 0 220 110" aria-hidden="true">
+          <rect x="4" y="4" width="212" height="102" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M14 24 h20 M14 14 v20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M206 86 h-20 M206 96 v-20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <div class="denoms" id="denoms" role="group" aria-label="券種"></div>
+
+      <div class="serial-row">
+        <div class="serial-boxes" id="serial-boxes" aria-label="記番号"></div>
+        <button class="cam-btn" id="btn-camera" aria-label="カメラで読む">📷</button>
+      </div>
+      <div class="colors" id="colors" hidden></div>
+
+      <button class="place-line" id="btn-place">
+        <span id="place-text">場所を選ぶ ›</span>
+      </button>
+
+      <button class="register-btn" id="btn-register" disabled>登録</button>
+
+      <div class="keypad" id="keypad"></div>
+
+      <p class="note">お札に書き込まないでください</p>
+    </section>
+
+    <!-- ============ 自分の記録 ============ -->
+    <section class="view" data-view="mine" hidden>
+      <div class="summary" id="mine-summary"></div>
+      <div class="map-host" id="mine-map"></div>
+      <div class="dex" id="mine-dex"></div>
+      <div class="sort-row">
+        <select id="mine-sort">
+          <option value="new">新しい順</option>
+          <option value="far">距離の長い順</option>
+          <option value="denom">券種</option>
+        </select>
+      </div>
+      <div class="bill-list" id="mine-list"></div>
+    </section>
+
+    <!-- ============ みんな ============ -->
+    <section class="view" data-view="everyone" hidden>
+      <div class="global-stats" id="global-stats"></div>
+      <div class="hit-list" id="hit-list"></div>
+    </section>
+
+    <nav class="tabbar">
+      <button class="tab" data-tab="input" aria-current="page">登録</button>
+      <button class="tab" data-tab="mine">自分の記録</button>
+      <button class="tab" data-tab="everyone">みんな</button>
+    </nav>
+
+    <footer class="credit">
+      <a href="https://t-of.github.io/">T.OF...</a> のアプリ
+    </footer>
+  </main>
+
+  <!-- ============ 撮影 ============ -->
+  <div class="overlay overlay--cam" id="cam-overlay" hidden>
+    <video id="cam-video" playsinline muted></video>
+    <canvas id="cam-canvas" hidden></canvas>
+    <div class="cam-frame"><span id="cam-hint">記番号を枠に合わせてください</span></div>
+    <div class="cam-denoms" id="cam-denoms"></div>
+    <input type="file" id="cam-file" accept="image/*" capture="environment" hidden>
+    <button class="cam-close" id="btn-cam-close" aria-label="閉じる">✕</button>
+  </div>
+
+  <!-- ============ 場所を選ぶ ============ -->
+  <div class="sheet" id="place-sheet" hidden>
+    <div class="sheet__body">
+      <h2>場所を選ぶ</h2>
+      <button class="sheet__here" id="btn-here">📍 今いる所</button>
+      <input type="text" id="place-search" placeholder="市区町村名を入力（例: 渋谷）" inputmode="search">
+      <ul class="place-candidates" id="place-candidates"></ul>
+      <button class="sheet__close" id="btn-place-close">閉じる</button>
+    </div>
+  </div>
+
+  <!-- ============ 確かめのカード ============ -->
+  <div class="sheet" id="confirm-sheet" hidden>
+    <div class="sheet__body">
+      <h2>登録します</h2>
+      <p id="confirm-text"></p>
+      <p class="confirm-note">登録した市区町村と日時は、このお札を手にした人に見えます。</p>
+      <label class="confirm-toggle"><input type="checkbox" id="confirm-skip"> 次から確かめない</label>
+      <div class="sheet__row">
+        <button class="ghost" id="btn-confirm-cancel">やめる</button>
+        <button class="primary" id="btn-confirm-ok">登録する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 結果 ============ -->
+  <div class="overlay overlay--result" id="result-view" hidden>
+    <div class="result-body" id="result-body"></div>
+    <div class="result-actions">
+      <button class="primary" id="btn-again">もう 1 枚</button>
+      <button class="ghost" id="btn-relay">リレーのリンクを送る</button>
+      <button class="ghost" id="btn-share-result">共有</button>
+      <button class="ghost" id="btn-journey">道のりを見る</button>
+      <button class="ghost" id="btn-result-close">閉じる</button>
+    </div>
+  </div>
+
+  <!-- ============ 1 枚の道のり ============ -->
+  <div class="overlay overlay--journey" id="journey-view" hidden>
+    <button class="cam-close" id="btn-journey-close" aria-label="閉じる">✕</button>
+    <div class="map-host" id="journey-map"></div>
+    <div class="journey-list" id="journey-list"></div>
+  </div>
+
+  <!-- ============ 設定 ============ -->
+  <div class="overlay overlay--settings" id="settings-view" hidden>
+    <button class="cam-close" id="btn-settings-close" aria-label="閉じる">✕</button>
+    <h2>設定・情報</h2>
+    <label class="row"><span>音</span><input type="checkbox" id="opt-sound"></label>
+    <label class="row"><span>登録前の確かめ</span><input type="checkbox" id="opt-confirm"></label>
+    <label class="row"><span>はじめに開く</span>
+      <select id="opt-input">
+        <option value="pad">キーパッド</option>
+        <option value="camera">カメラ</option>
+      </select>
+    </label>
+    <p class="settings-links">
+      <a href="#" id="link-privacy">プライバシー</a>・
+      <a href="#" id="link-credit">データと部品の出典</a>
+    </p>
+    <p class="note">お札に書き込まないでください</p>
+    <p class="credit"><a href="https://t-of.github.io/">T.OF... のアプリ</a></p>
+  </div>
+
+  <!-- ============ 文面表示（プライバシー・出典） ============ -->
+  <div class="sheet" id="text-sheet" hidden>
+    <div class="sheet__body">
+      <h2 id="text-title"></h2>
+      <div id="text-body" class="text-body"></div>
+      <button class="sheet__close" id="btn-text-close">閉じる</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="./webapp-kit/webapp-kit.js"></script>
+  <script src="./firebase-config.js"></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
