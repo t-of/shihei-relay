@@ -61,7 +61,7 @@ Firebase（Spark プラン・無料）を使う。`firebase-config.js` が `null
 4. 「アプリを追加」→ ウェブアプリを登録し、出てきた `firebaseConfig` の値を `firebase-config.js` の `window.SHIHEI_FIREBASE_CONFIG` にそのまま入れる（`apiKey` は公開してよい値。守りは `firestore.rules` 側）。
 5. Firestore の「ルール」タブに、このリポジトリの [`firestore.rules`](firestore.rules) の中身を貼り付けて **公開** する。**`firestore.rules` を直すたびに、ここへ貼り直して公開しないと本番に効かない。**
 6. **公開前に** App Check（reCAPTCHA v3）を有効にする（無料の Spark プランのまま、ボットによる読み取り連打から無料枠を守るため）。
-   1. [reCAPTCHA の管理画面](https://www.google.com/recaptcha/admin/create) で **v3** のキーを作る（ドメインに `t-of.github.io` を追加）。
+   1. [reCAPTCHA の管理画面](https://www.google.com/recaptcha/admin/create) で **v3** のキーを作る（ドメインに `shihei-relay.t-of.workers.dev` と `localhost` を追加）。
    2. Firebase コンソール → **App Check** → ウェブアプリを登録し、プロバイダを **reCAPTCHA v3**、上で作ったサイトキーを入れる。
    3. 出てきたサイトキーを `firebase-config.js` の `appCheckSiteKey` に入れる。
    4. 数日〜1 週間ほど「指標」タブで、正当なリクエストの割合を見る（低すぎると本物の利用者まで弾く）。
