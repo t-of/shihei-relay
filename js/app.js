@@ -357,6 +357,7 @@ function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }
   // 一致がなかったとき（初めての登録）だけ、アプリを広める呼びかけを添える。押しつけがましく
   // 毎回出さないよう、再発見のとき（すでに嬉しい結果があるとき）は出さない。
   $('spread-group').hidden = !(outcome.first && !outcome.offline);
+  $('btn-share-result').hidden = !$('spread-group').hidden; // 広めるボタンがあるときは、共有を並べない
 
   $('result-view').hidden = false;
   const actions = document.querySelectorAll('.result-actions button');
