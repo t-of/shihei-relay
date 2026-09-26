@@ -933,7 +933,7 @@ const TERMS_TEXT = `紙幣リレーは無料で使えます。使うと、次の
 ・送る情報と見える範囲は「プライバシー」のページのとおりです。
 ・この規約を変えるときは、このアプリの中で知らせます。
 
-問い合わせ: https://github.com/t-of/t-of.github.io/issues（誰でも読めるので、記番号やメールアドレスは書かないでください）`;
+問い合わせ: https://t-of.github.io/contact/`;
 const CREDIT_TEXT = `市区町村の緯度経度・コード: 総務省・国土交通省の公開データを含む jp-address-search（MIT License, uiuifree）
 日本の輪郭: Natural Earth（パブリックドメイン）
 文字を読む部品: Tesseract.js / tesseract.js-core（Apache License 2.0）
