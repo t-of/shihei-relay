@@ -528,7 +528,9 @@ async function openCamera() {
       state.camLoop = Cam.startScanLoop({
         video: $('cam-video'),
         canvas: $('cam-canvas'),
+        frame: document.querySelector('.cam-frame'),
         denom: () => state.denom,
+        onTick: (text) => { $('cam-hint').textContent = text ? `読んでいます: ${text.replace(/\s+/g, ' ').slice(0, 20)}` : '記番号を枠に合わせてください'; },
         onMatch: (serial, cand) => {
           sfx.camHit();
           if (navigator.vibrate) navigator.vibrate(30);

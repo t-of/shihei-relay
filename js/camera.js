@@ -115,7 +115,7 @@ function otsuThreshold(hist, total) {
  * 自動で読み続けるループ。形に合う同じ結果が 2 回続いたら止めて確定する。
  * @returns {{ stop: () => void }}
  */
-export function startScanLoop({ video, canvas, denom, onProgress, onMatch, onTick, onTimeout }) {
+export function startScanLoop({ video, canvas, frame, denom, onProgress, onMatch, onTick, onTimeout }) {
   const getDenom = () => (typeof denom === 'function' ? denom() : denom);
   let stopped = false;
   let lastKey = null;
@@ -127,8 +127,7 @@ export function startScanLoop({ video, canvas, denom, onProgress, onMatch, onTic
     if (stopped) return;
     if (video.readyState < 2 || video.videoWidth === 0) { schedule(); return; }
 
-    const vw = video.videoWidth, vh = video.videoHeight;
-    const box = { x: vw * 0.08, y: vh * 0.42, w: vw * 0.84, h: vh * 0.16 }; // 横長 5:1 の枠のあたり
+    const box = frameBoxInVideo(video, frame);
     cropAndBinarize(video, box, canvas);
 
     try {
@@ -153,7 +152,7 @@ export function startScanLoop({ video, canvas, denom, onProgress, onMatch, onTic
       console.error('recognize failed', e);
     }
 
-    if (Date.now() - startedAt > 10000) { onTimeout?.(bestPartial); return; }
+    if (Date.now() - startedAt > 20000) { onTimeout?.(bestPartial); return; }
     schedule();
   }
 
@@ -163,10 +162,30 @@ export function startScanLoop({ video, canvas, denom, onProgress, onMatch, onTic
   return { stop: () => { stopped = true; } };
 }
 
+/**
+ * 画面の枠（frame 要素）が、映像のどこに当たるかを求める。
+ * 映像は object-fit: cover で画面いっぱいに広げているので、映像と画面の縦横比が違うと端が切れる。
+ * 映像の割合で決め打ちすると、枠と違う場所を読んでしまう（iPhone で読めなかった原因）。
+ */
+export function frameBoxInVideo(video, frame) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!frame) return { x: vw * 0.08, y: vh * 0.42, w: vw * 0.84, h: vh * 0.16 };
+  const v = video.getBoundingClientRect();
+  const f = frame.getBoundingClientRect();
+  const scale = Math.max(v.width / vw, v.height / vh);
+  const offX = (v.width - vw * scale) / 2;
+  const offY = (v.height - vh * scale) / 2;
+  const x = Math.max(0, (f.left - v.left - offX) / scale);
+  const y = Math.max(0, (f.top - v.top - offY) / scale);
+  const w = Math.min(vw - x, f.width / scale);
+  const h = Math.min(vh - y, f.height / scale);
+  return { x, y, w, h };
+}
+
 /** 背面カメラの映像を取る。ダメなら理由を返す */
 export async function openCamera(videoEl) {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } });
     videoEl.srcObject = stream;
     await videoEl.play();
     return { ok: true, stream };
