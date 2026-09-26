@@ -20,6 +20,12 @@ window.SHIHEI_FIREBASE_CONFIG = {
   appCheckSiteKey: null,
 };
 
+// みんなの地図の集計（agg/{id}。仕様「21」）の書き込みのスイッチ。
+// firestore.rules に agg 用のルールがまだ公開されていない本番でこれを true にすると、
+// 集計の書き込みが permission-denied になり、登録そのものが失敗する。
+// ディレクターが新しい firestore.rules を Firebase コンソールで公開したあと、ここを true にして出す。
+window.SHIHEI_AGG_ENABLED = false;
+
 // 例:
 // window.SHIHEI_FIREBASE_CONFIG = {
 //   apiKey: 'AIza...',

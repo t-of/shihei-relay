@@ -1053,32 +1053,110 @@ function statCard(label, val) {
   return card;
 }
 
-// ---- みんな ----
+// ---- みんな（仕様「21」: 地図・絞り込み） ----
 
-// 再発見がこの件数を下回るうちは、「広める」の呼びかけをみんなの画面の上に出す。
+// 集計（agg）を始めた日。まだ公開日が決まっていないための仮の値（ponytail）。
+// ディレクターが rules を公開してこの節を有効にする日に、実際の日付へ直す。
+const AGG_START_LABEL = '2026 年◯月◯日';
+
+// 再発見・登録がこの件数を下回るうちは、「広める」の呼びかけをみんなの画面の上に出す。
 const SPREAD_THRESHOLD = 5;
+const REG_SPREAD_THRESHOLD = 20;
 
 // 上限（resource-exhausted）や network の失敗のときの案内。permission-denied（形の不正など）は含めない。
 const CONGESTION_TEXT_REGISTER = '登録が混み合っているか、通信がつながらないため、みんなとの照合ができませんでした。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
 const CONGESTION_TEXT_VIEW = 'アクセスが混み合っているか、通信がつながらないため、みんなの画面を出せません。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
 const isCongested = (res) => !res.ok && res.reason !== 'permission-denied';
 
-// 「みんな」タブは開くたびに読み取りが多い（再発見数・最長の旅・最近 20 件で約 22 回）ので、
-// 5 分間は端末に取っておいた結果を使い回す（Firestore 無料枠を守るため）。
-const EVERYONE_CACHE_KEY = 'everyoneCache';
-const EVERYONE_CACHE_TTL_MS = 5 * 60 * 1000;
-function loadEveryoneCache() {
+// 見え方・期間・絞り込み。設定には保存せず、タブを開くたびに既定へ戻す（仕様「21」に保存の指定は無い）。
+const everyone = { mode: 'reg', period: 'all', denom: 'all', dist: 'all', kind: 'all' };
+
+const DENOM_FILTER_LABEL = {
+  all: 'お札: すべて', new: '新しいお札（2024〜）', old: '前のお札', mukashi: '昔のお札',
+  10000: '一万円', 5000: '五千円', 2000: '二千円', 1000: '千円',
+};
+const DIST_FILTER_LABEL = { all: '距離: すべて', 100: '距離: 100 km〜', 500: '距離: 500 km〜' };
+const KIND_FILTER_LABEL = { all: '種類: すべて', normal: '種類: 再発見', comeback: '種類: 戻ってきた' };
+
+function fillSelect(id, labelMap, value) {
+  const sel = $(id);
+  sel.replaceChildren(...Object.entries(labelMap).map(([v, label]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = label; return o;
+  }));
+  sel.value = value;
+}
+fillSelect('ev-denom', DENOM_FILTER_LABEL, everyone.denom);
+fillSelect('ev-dist', DIST_FILTER_LABEL, everyone.dist);
+fillSelect('ev-kind', KIND_FILTER_LABEL, everyone.kind);
+
+$('ev-mode').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+  everyone.mode = b.dataset.mode;
+  $('ev-mode').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  $('ev-dist').hidden = everyone.mode !== 'journeys';
+  $('ev-kind').hidden = everyone.mode !== 'journeys';
+  sfx.choice();
+  renderEveryoneBody();
+}));
+$('ev-period').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+  everyone.period = b.dataset.period;
+  $('ev-period').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  sfx.choice();
+  renderEveryoneBody();
+}));
+$('ev-denom').addEventListener('change', (e) => { everyone.denom = e.target.value; sfx.choice(); renderEveryoneBody(); });
+$('ev-dist').addEventListener('change', (e) => { everyone.dist = e.target.value; sfx.choice(); renderEveryoneBody(); });
+$('ev-kind').addEventListener('change', (e) => { everyone.kind = e.target.value; sfx.choice(); renderEveryoneBody(); });
+$('btn-ev-reset').addEventListener('click', () => {
+  // 「期間とお札を初めに戻す」（仕様「21-6」）。距離・種類（再発見の旅だけの絞り込み）はそのまま。
+  everyone.period = 'all'; everyone.denom = 'all';
+  $('ev-period').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.period === 'all')));
+  fillSelect('ev-denom', DENOM_FILTER_LABEL, 'all');
+  sfx.choice();
+  renderEveryoneBody();
+});
+
+// 「みんな」タブは開くたびに読み取りが多いので、5 分間は端末に取っておいた結果を使い回す
+// （Firestore 無料枠を守るため）。stats・hits・agg（期間ごと）を別々の鍵で持つ。
+const EV_CACHE_TTL_MS = 5 * 60 * 1000;
+function loadEvCache(key) {
   try {
-    const raw = sessionStorage.getItem(STORE + EVERYONE_CACHE_KEY);
+    const raw = sessionStorage.getItem(STORE + 'ev.' + key);
     if (!raw) return null;
     const c = JSON.parse(raw);
-    if (!c || Date.now() - c.at > EVERYONE_CACHE_TTL_MS) return null;
-    return c;
+    if (!c || Date.now() - c.at > EV_CACHE_TTL_MS) return null;
+    return c.data;
   } catch { return null; }
 }
-function saveEveryoneCache(stats, hits) {
-  try { sessionStorage.setItem(STORE + EVERYONE_CACHE_KEY, JSON.stringify({ at: Date.now(), stats, hits })); } catch { /* 取っておけなくても遊べる */ }
+function saveEvCache(key, data) {
+  try { sessionStorage.setItem(STORE + 'ev.' + key, JSON.stringify({ at: Date.now(), data })); } catch { /* 取っておけなくても遊べる */ }
 }
+async function loadStats() {
+  const cached = loadEvCache('stats');
+  if (cached) return cached;
+  const stats = await FB.fetchGlobalStats();
+  saveEvCache('stats', stats);
+  return stats;
+}
+async function loadHits() {
+  const cached = loadEvCache('hits');
+  if (cached) return cached;
+  const hits = await FB.fetchRecentHits(FB.isAggEnabled() ? 50 : 20); // rules 公開前は hits の list が 20 件まで
+  saveEvCache('hits', hits);
+  return hits;
+}
+/** agg/all・agg/d<日> をまとめて読む（期間ごとにキャッシュ）。AGG_ENABLED でないときは呼ばない */
+async function loadAgg(period) {
+  const key = `agg:${period}`;
+  const cached = loadEvCache(key);
+  if (cached) return cached;
+  const ids = period === 'all' ? ['all'] : period === 'today' ? [Bill.jstDayId()] : Bill.recentDayIds(7);
+  const res = await FB.fetchAgg(ids);
+  saveEvCache(key, res);
+  return res;
+}
+const sumAll = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
+
+let lastHits = null; // 見え方の切り替えで読み直さないよう、直近の hits を覚えておく
 
 async function renderEveryone() {
   const statsHost = $('global-stats');
@@ -1086,40 +1164,140 @@ async function renderEveryone() {
     $('spread-banner').hidden = true;
     statsHost.replaceChildren(el('div', 'card', null));
     statsHost.firstChild.appendChild(el('span', null, '準備中です（サーバーの設定待ち）'));
-    $('hit-list').replaceChildren();
+    lastHits = null;
+    await renderEveryoneBody();
     return;
   }
-  // stats.hitCount・longestKm、hits.rows の中身（h.from・h.to・h.km・h.mins）はすべて Firestore から来た値。
+  // stats・hits・agg の中身（市区町村コード・km・分など）はすべて Firestore から来た値。
   // innerHTML に入れず、textContent で入れる（RULES.md §1 の推奨）。
-  const cached = loadEveryoneCache();
-  let stats, hits;
-  if (cached) {
-    ({ stats, hits } = cached);
-  } else {
-    [stats, hits] = await Promise.all([FB.fetchGlobalStats(), FB.fetchRecentHits(20)]);
-    saveEveryoneCache(stats, hits);
-  }
+  const [stats, hits, aggAll] = await Promise.all([
+    loadStats(), loadHits(), FB.isAggEnabled() ? loadAgg('all') : Promise.resolve(null),
+  ]);
+  lastHits = hits;
+  const regTotal = aggAll && aggAll.ok ? sumAll(Bill.sumCells(aggAll.mList)) : null;
+
+  statsHost.replaceChildren();
+  if (regTotal != null) statsHost.appendChild(statCard('登録', `${regTotal} 回`));
   if (stats.ok) {
-    statsHost.replaceChildren();
     statsHost.appendChild(statCard('再発見', `${stats.hitCount} 件`));
     statsHost.appendChild(statCard('最長の旅', `${stats.longestKm} km`));
   } else if (isCongested(stats)) {
-    statsHost.replaceChildren(el('div', 'card', null));
-    statsHost.firstChild.appendChild(el('span', null, CONGESTION_TEXT_VIEW));
+    statsHost.appendChild(el('div', 'card', null));
+    statsHost.lastChild.appendChild(el('span', null, CONGESTION_TEXT_VIEW));
   }
-  const few = stats.ok ? stats.hitCount < SPREAD_THRESHOLD : (hits.ok && hits.rows.length < SPREAD_THRESHOLD);
-  $('spread-banner').hidden = !few;
+  const fewHits = stats.ok ? stats.hitCount < SPREAD_THRESHOLD : (hits.ok && hits.rows.length < SPREAD_THRESHOLD);
+  const fewReg = regTotal != null && regTotal < REG_SPREAD_THRESHOLD;
+  $('spread-banner').hidden = !(fewHits || fewReg);
+
+  await renderEveryoneBody();
+}
+
+/** 地図・下の並びだけを描き直す（見え方・期間・絞り込みを変えたとき。読み取りは agg のキャッシュ任せ） */
+async function renderEveryoneBody() {
+  const host = $('everyone-map');
+  const svg = await Map.mountMap(host);
+  Map.clearMarks(svg);
+  $('ev-tap-info').hidden = true;
+  $('ev-legend').hidden = everyone.mode !== 'reg';
+  $('ev-since').hidden = everyone.mode !== 'reg';
+  $('ev-top5').replaceChildren();
+  $('hit-list').replaceChildren();
+  $('ev-empty').hidden = true;
+  $('btn-ev-reset').hidden = true;
+
+  // 自分が登録した市区町村は、集計の有無に関わらずいつも輪で出す（仕様「21-6」）。
+  for (const code of new Set(mine.bills.map((b) => b.muni))) {
+    const ll = muniLatLng(code);
+    if (ll) Map.addRing(svg, ll);
+  }
+
+  if (!FB.isConfigured()) return;
+
+  if (everyone.mode === 'reg') {
+    $('ev-since').textContent = `${AGG_START_LABEL}からの登録を数えています`;
+    if (!FB.isAggEnabled()) {
+      $('ev-top5').appendChild(el('p', 'muted', '登録した場所の地図は準備中です（集計はまもなく始まります）'));
+      return;
+    }
+    const res = await loadAgg(everyone.period);
+    if (!res.ok) {
+      if (isCongested(res)) $('ev-top5').appendChild(el('p', 'muted', CONGESTION_TEXT_VIEW));
+      return;
+    }
+    renderRegMap(svg, res.mList);
+  } else {
+    renderJourneys(svg, lastHits);
+  }
+}
+
+/** 「登録した場所」の地図・上位 5（仕様「21-6」） */
+function renderRegMap(svg, mList) {
+  const matchType = (ty) => Bill.billFilterMatch(everyone.denom, ty);
+  const counts = Bill.sumCells(mList, matchType);
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    const filtered = everyone.period !== 'all' || everyone.denom !== 'all';
+    $('ev-empty').hidden = false;
+    $('ev-empty').textContent = filtered ? 'この条件の登録はまだありません' : 'まだ登録はありません。最初の点を灯そう';
+    $('btn-ev-reset').hidden = !filtered;
+    return;
+  }
+  const max = entries[0][1];
+  // 数の多い点を先に描く（後から描く小さい点が隠れないように。仕様「21-6」）
+  for (const [code, count] of entries) {
+    const ll = muniLatLng(code);
+    if (!ll) continue;
+    const rPx = 60 + 380 * Math.sqrt(count / max);
+    const opacity = 0.35 + 0.55 * (count / max);
+    Map.addCountPoint(svg, ll, { rPx, opacity });
+    Map.addTapTarget(svg, ll, () => showMuniTapInfo(code, count, mList, matchType));
+  }
+  const top5Host = $('ev-top5');
+  for (const [code, count] of entries.slice(0, 5)) {
+    const row = el('div', 'hit-row');
+    row.appendChild(el('span', null, muniLabel(code) || code));
+    row.appendChild(el('span', 'muted', `${count} 回`));
+    top5Host.appendChild(row);
+  }
+}
+
+function showMuniTapInfo(code, count, mList, matchType) {
+  const breakdown = Bill.muniBreakdown(mList, code, matchType);
+  const parts = Object.entries(breakdown).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([d, c]) => `${DENOM_LABEL[d]}${c}`);
+  const info = $('ev-tap-info');
+  info.hidden = false;
+  info.textContent = `${muniLabel(code) || code} ${count} 回${parts.length ? `（${parts.join('・')}）` : ''}`;
+  sfx.choice();
+}
+
+/** 「再発見の旅」の地図・並び（仕様「21-6」）。今の並び（🔁・km・時間）を絞り込んだ結果で出す */
+function renderJourneys(svg, hits) {
   const listHost = $('hit-list');
-  listHost.replaceChildren();
-  if (!hits.ok) {
-    if (isCongested(hits)) listHost.appendChild(el('p', 'muted', CONGESTION_TEXT_VIEW));
+  if (!hits || !hits.ok) {
+    if (hits && isCongested(hits)) listHost.appendChild(el('p', 'muted', CONGESTION_TEXT_VIEW));
     return;
   }
-  if (hits.rows.length === 0) {
-    listHost.appendChild(el('p', 'muted', 'まだ再発見はありません。リレーのリンクで最初の 1 本をつなごう'));
+  const now = Date.now();
+  const rows = hits.rows.filter((h) => (
+    Bill.hitWithinPeriod(h.at, everyone.period, now)
+    && Bill.hitMatchesBillFilter(h, everyone.denom)
+    && (everyone.dist === 'all' || h.km >= Number(everyone.dist))
+    && (everyone.kind === 'all' || (everyone.kind === 'comeback' ? h.comeback : !h.comeback))
+  ));
+  if (rows.length === 0) {
+    const filtered = everyone.period !== 'all' || everyone.denom !== 'all' || everyone.dist !== 'all' || everyone.kind !== 'all';
+    $('ev-empty').hidden = false;
+    $('ev-empty').textContent = filtered ? 'この条件の登録はまだありません' : 'まだ再発見はありません。リレーのリンクで最初の 1 本をつなごう';
+    $('btn-ev-reset').hidden = !filtered;
     return;
   }
-  for (const h of hits.rows) {
+  // ty（号券）を持たない古い hits は、券種以外の絞り込み（新・旧・昔）では省かれる（仕様「21-3」）
+  if (['new', 'old', 'mukashi'].includes(everyone.denom) && hits.rows.some((h) => !h.ty)) {
+    listHost.appendChild(el('p', 'muted', '号券の記録がない、前の再発見は含みません'));
+  }
+  for (const h of rows) {
+    const a = muniLatLng(h.from), b = muniLatLng(h.to);
+    if (a && b) { Map.addLine(svg, a, b); Map.addPoint(svg, a); Map.addPoint(svg, b, { self: true }); }
     const row = el('div', 'hit-row');
     const label = h.comeback ? `🔁 ${muniLabel(h.from) || ''} → ${muniLabel(h.to) || ''}` : `${muniLabel(h.from) || ''} → ${muniLabel(h.to) || ''}`;
     row.appendChild(el('span', null, label));

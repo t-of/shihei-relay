@@ -11,6 +11,8 @@ import {
   sightingDocId, parseSightingDocId, analyzeRegistration, sumPathKm,
   RETURN_MIN_GAP_MS, MAX_RETURN_N,
   NOTE_TYPES, parseKey, RARE_RANK, compareBills,
+  jstDayId, jstMinuteOfDay, recentDayIds, billFilterMatch, sumCells, muniBreakdown,
+  hitMatchesBillFilter, hitWithinPeriod,
 } from '../js/bill.js';
 
 // ---- 形の正しい例・間違った例 ----
@@ -461,6 +463,73 @@ test('compareBills: レア順（レアが上、同じ順位なら新しい順）
   const rare = { key: 'F10000K-AB777777CD', at: 1 }; // ゾロ目
   const normal = { key: 'F10000K-AB284917CD', at: 2 };
   assert.ok(compareBills(rare, normal, 'rare') < 0);
+});
+
+// ---- みんなの地図（仕様「21」） ----
+
+test('jstDayId: 日本時間の年-月-日を 0 を詰めずに返す', () => {
+  // 2026-09-27 12:00 UTC = 2026-09-27 21:00 JST
+  assert.equal(jstDayId(Date.UTC(2026, 8, 27, 12, 0, 0)), 'd2026-9-27');
+  // 2026-01-05 16:00 UTC = 2026-01-06 01:00 JST（日付が変わる）
+  assert.equal(jstDayId(Date.UTC(2026, 0, 5, 16, 0, 0)), 'd2026-1-6');
+});
+
+test('jstMinuteOfDay: 日本時間 0 時からの分', () => {
+  assert.equal(jstMinuteOfDay(Date.UTC(2026, 0, 5, 15, 0, 0)), 0); // ちょうど JST 0 時
+  assert.equal(jstMinuteOfDay(Date.UTC(2026, 0, 5, 15, 9, 0)), 9);
+});
+
+test('recentDayIds: 今日を含む新しい順 n 日分', () => {
+  const now = Date.UTC(2026, 8, 27, 12, 0, 0); // JST 2026-9-27 21:00
+  const ids = recentDayIds(3, now);
+  assert.deepEqual(ids, ['d2026-9-27', 'd2026-9-26', 'd2026-9-25']);
+});
+
+test('billFilterMatch: 新しいお札・前のお札・昔のお札・券種', () => {
+  assert.equal(billFilterMatch('all', 'E1000'), true);
+  assert.equal(billFilterMatch('new', 'F10000'), true);
+  assert.equal(billFilterMatch('new', 'E1000'), false);
+  assert.equal(billFilterMatch('old', 'E1000'), true);
+  assert.equal(billFilterMatch('old', 'D1000'), false); // 昔のお札は old 側ではない
+  assert.equal(billFilterMatch('mukashi', 'D1000'), true);
+  assert.equal(billFilterMatch('1000', 'E1000'), true);
+  assert.equal(billFilterMatch('1000', 'F10000'), false);
+  assert.equal(billFilterMatch('all', 'nope'), true); // 'all' は typeId を見ない
+  assert.equal(billFilterMatch('new', 'nope'), false);
+});
+
+test('sumCells: 複数の agg 文書の m を、絞り込みながら市区町村ごとに足す', () => {
+  const m1 = { 13113: { F10000: 3, E1000: 2 }, 27100: { F1000: 1 } };
+  const m2 = { 13113: { F10000: 1 }, 40133: { D1000: 5 } };
+  assert.deepEqual(sumCells([m1, m2]), { 13113: 6, 27100: 1, 40133: 5 });
+  assert.deepEqual(sumCells([m1, m2], (ty) => billFilterMatch('new', ty)), { 13113: 4, 27100: 1 }); // F1000 も新しいお札（F 号券）
+  assert.deepEqual(sumCells([null, undefined]), {});
+});
+
+test('muniBreakdown: 1 つの市区町村の券種の額ごとの内訳', () => {
+  const m = { 13113: { F10000: 3, E1000: 2, F1000: 1 } };
+  assert.deepEqual(muniBreakdown([m], '13113'), { 10000: 3, 1000: 3 });
+  assert.deepEqual(muniBreakdown([m], '13113', (ty) => billFilterMatch('new', ty)), { 10000: 3, 1000: 1 });
+  assert.deepEqual(muniBreakdown([m], '99999'), {});
+});
+
+test('hitMatchesBillFilter: 券種の絞り込みは ty が無くても denom で見られる', () => {
+  assert.equal(hitMatchesBillFilter({ denom: 1000 }, '1000'), true);
+  assert.equal(hitMatchesBillFilter({ denom: 10000 }, '1000'), false);
+  assert.equal(hitMatchesBillFilter({ denom: 1000, ty: 'E1000' }, 'old'), true);
+  assert.equal(hitMatchesBillFilter({ denom: 1000 }, 'old'), false); // ty が無いと新・旧・昔では判定できない
+  assert.equal(hitMatchesBillFilter({ denom: 1000 }, 'all'), true);
+});
+
+test('hitWithinPeriod: 今日は JST の暦日、7 日間は 7×24 時間', () => {
+  const now = Date.UTC(2026, 8, 27, 12, 0, 0); // JST 2026-9-27 21:00
+  const sameDay = Date.UTC(2026, 8, 27, 1, 0, 0); // JST 2026-9-27 10:00
+  const yesterday = Date.UTC(2026, 8, 26, 10, 0, 0); // JST 2026-9-26 19:00（前日）
+  assert.equal(hitWithinPeriod(sameDay, 'today', now), true);
+  assert.equal(hitWithinPeriod(yesterday, 'today', now), false);
+  assert.equal(hitWithinPeriod(now - 6 * 86400000, '7d', now), true);
+  assert.equal(hitWithinPeriod(now - 8 * 86400000, '7d', now), false);
+  assert.equal(hitWithinPeriod(0, 'all', now), true);
 });
 
 test('pickChars: 高さのそろった字だけ残し、枠に触れる模様・小さな点は捨てる', async () => {

@@ -449,3 +449,91 @@ export function sumPathKm(points, distanceKmFn = distanceKm) {
   }
   return total;
 }
+
+// ---- みんなの地図（仕様「21」。集計 agg/{id} と絞り込み） ----
+
+/** 日本時間（JST）の「年-月-日」を、0 を詰めずに返す（agg/{id} の日ごとの文書の id と同じ形） */
+export function jstDayId(ms = Date.now()) {
+  const t = new Date(ms + 9 * 3600 * 1000); // UTC + 9 時間 = JST の壁時計
+  return `d${t.getUTCFullYear()}-${t.getUTCMonth() + 1}-${t.getUTCDate()}`;
+}
+
+/** 日本時間の午前 0 時から何分たったか（0〜1439）。0 時前後の再送の判定に使う */
+export function jstMinuteOfDay(ms = Date.now()) {
+  const t = new Date(ms + 9 * 3600 * 1000);
+  return t.getUTCHours() * 60 + t.getUTCMinutes();
+}
+
+/** 今日から遡って n 日分の agg の日ごとの id（今日を含む、新しい順） */
+export function recentDayIds(n, ms = Date.now()) {
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(jstDayId(ms - i * 86400000));
+  return out;
+}
+
+/**
+ * 「お札」の絞り込み（仕様「21-6」）。すべて / 新しいお札（F 号券）/ 前のお札（今も発行中の E・D 号券）/
+ * 昔のお札（もっと見るのもの）/ 一万・五千・二千・千円。typeId は NOTE_TYPES の id（例 'F10000'）。
+ * @param {'all'|'new'|'old'|'mukashi'|'10000'|'5000'|'2000'|'1000'} filter
+ */
+export function billFilterMatch(filter, typeId) {
+  if (filter === 'all') return true;
+  const row = noteType(typeId);
+  if (!row) return false;
+  if (filter === 'new') return row.series === 'F';
+  if (filter === 'old') return !row.old && row.series !== 'F';
+  if (filter === 'mukashi') return !!row.old;
+  return row.denom === Number(filter);
+}
+
+/**
+ * agg/{id} の `m`（市区町村 → typeId → 数）を、複数の文書（今日 + 過去分など）にわたって
+ * 絞り込みながら市区町村ごとに足し合わせる。
+ * @param {(object|null|undefined)[]} mList agg 文書たちの `m`
+ * @param {(typeId: string) => boolean} matchType 絞り込み（billFilterMatch を渡せる）
+ * @returns {Record<string, number>} 市区町村コード → 数（0 の市区町村は含まない）
+ */
+export function sumCells(mList, matchType = () => true) {
+  const out = {};
+  for (const m of mList) {
+    if (!m) continue;
+    for (const [muni, cell] of Object.entries(m)) {
+      let n = 0;
+      for (const [ty, c] of Object.entries(cell)) if (matchType(ty)) n += c;
+      if (n > 0) out[muni] = (out[muni] || 0) + n;
+    }
+  }
+  return out;
+}
+
+/** 市区町村 1 つぶんの内訳（券種の額ごとの合計）。地図で点を押したときの 1 行に使う */
+export function muniBreakdown(mList, muniCode, matchType = () => true) {
+  const byDenom = {};
+  for (const m of mList) {
+    const cell = m?.[muniCode];
+    if (!cell) continue;
+    for (const [ty, c] of Object.entries(cell)) {
+      if (!matchType(ty)) continue;
+      const row = noteType(ty);
+      if (!row) continue;
+      byDenom[row.denom] = (byDenom[row.denom] || 0) + c;
+    }
+  }
+  return byDenom;
+}
+
+/** hits/{id} が「お札」の絞り込みに合うか。ty（号券。古い hits には無い）が無ければ、券種だけの絞り込み以外は含めない */
+export function hitMatchesBillFilter(hit, filter) {
+  if (filter === 'all') return true;
+  if (['10000', '5000', '2000', '1000'].includes(filter)) return hit.denom === Number(filter);
+  if (!hit.ty) return false; // 号券の記録がない古い hits
+  return billFilterMatch(filter, hit.ty);
+}
+
+/** hits が期間（今日・7 日間・全部）に合うか。「今日」は日本時間の暦日で比べる（agg と同じ数え方） */
+export function hitWithinPeriod(atMs, period, nowMs = Date.now()) {
+  if (period === 'all') return true;
+  if (period === 'today') return jstDayId(atMs) === jstDayId(nowMs);
+  if (period === '7d') return nowMs - atMs < 7 * 86400000;
+  return true;
+}

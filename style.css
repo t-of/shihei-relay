@@ -249,11 +249,17 @@ a { color: inherit; }
 .spread-banner button { padding: 10px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 700; }
 
 .summary, .global-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.global-stats { grid-template-columns: repeat(3, 1fr); }
 .summary .card, .global-stats .card {
   background: var(--panel); border-radius: 10px; padding: 10px; text-align: center;
 }
 .summary .card b, .global-stats .card b { display: block; font-size: 20px; }
 .summary .card span, .global-stats .card span { font-size: 11px; color: var(--muted); }
+
+/* みんな（仕様「21」）: 見え方・期間の切り替え、絞り込みの並び */
+.ev-filters { display: flex; gap: 6px; }
+.ev-filters select { flex: 1; min-width: 0; padding: 8px 4px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; }
+#ev-tap-info { background: var(--panel); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 
 .map-host { position: relative; border-radius: 12px; overflow: hidden; background: var(--panel); }
 .map-host svg { touch-action: pan-y; }
@@ -267,6 +273,11 @@ a { color: inherit; }
 .jp-dot--pulse { animation: dot-pulse 1.6s ease-in-out infinite; }
 .jp-line { stroke: var(--dot); stroke-width: calc(45px / var(--z, 1)); stroke-linecap: round; opacity: 0.85; }
 @keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* みんなの地図（仕様「21」）: 市区町村ごとの登録の数（大きさ・濃さは js/map.js の addCountPoint が inline style で決める） */
+.jp-count { fill: var(--dot); }
+.jp-ring { fill: none; stroke: var(--dot-self); stroke-width: calc(20px / var(--z, 1)); r: calc(170px / var(--z, 1)); }
+.jp-tap { fill: transparent; cursor: pointer; }
 
 .dex { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .dex .slot { background: var(--panel); border-radius: 8px; padding: 8px; font-size: 12px; text-align: center; }

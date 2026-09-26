@@ -128,7 +128,53 @@ export function addLine(svg, from, to) {
 }
 
 export function clearMarks(svg) {
-  svg.querySelectorAll('.jp-dot, .jp-line').forEach((n) => n.remove());
+  svg.querySelectorAll('.jp-dot, .jp-line, .jp-count, .jp-ring, .jp-tap').forEach((n) => n.remove());
+}
+
+// ---- みんなの地図（仕様「21」。市区町村ごとの数を大きさ・濃さで出す） ----
+
+/**
+ * 市区町村ごとの登録の数を、点の大きさ（半径 rPx、CSS ピクセル相当）と濃さ（opacity）で描く。
+ * 大きい点から先に描く（後で描いた小さい点が隠れないように、呼び出し側で数の多い順に呼ぶ）。
+ */
+export function addCountPoint(svg, { lat, lng }, { rPx = 90, opacity = 0.6 } = {}) {
+  const { x, y } = project(lat, lng);
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  dot.setAttribute('cx', x.toFixed(1));
+  dot.setAttribute('cy', y.toFixed(1));
+  dot.setAttribute('class', 'jp-count');
+  dot.style.setProperty('r', `calc(${rPx}px / var(--z, 1))`);
+  dot.style.opacity = String(opacity);
+  svg.appendChild(dot);
+  return dot;
+}
+
+/** 自分が登録した市区町村の輪（集計の点が無くても出す。仕様「21-6」） */
+export function addRing(svg, { lat, lng }) {
+  const { x, y } = project(lat, lng);
+  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  ring.setAttribute('cx', x.toFixed(1));
+  ring.setAttribute('cy', y.toFixed(1));
+  ring.setAttribute('class', 'jp-ring');
+  svg.appendChild(ring);
+  return ring;
+}
+
+/**
+ * 見えない大きめの当たり判定（44px 相当）を点の上に重ね、押しやすくする（点そのものは小さいことがあるため）。
+ * ponytail: 画面上のピクセル距離での厳密な 44px 保証ではなく、地図の viewBox 上の固定サイズ（ズームで
+ * 見た目の大きさが変わらない他の点と同じ仕組み）。ズームし切った状態でも指 1 本で押せる大きさにしてある。
+ */
+export function addTapTarget(svg, { lat, lng }, onTap) {
+  const { x, y } = project(lat, lng);
+  const hit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  hit.setAttribute('cx', x.toFixed(1));
+  hit.setAttribute('cy', y.toFixed(1));
+  hit.setAttribute('class', 'jp-tap');
+  hit.style.setProperty('r', 'calc(260px / var(--z, 1))');
+  hit.addEventListener('click', onTap);
+  svg.appendChild(hit);
+  return hit;
 }
 
 /** 道のりが狭い範囲のときに使う、点を囲む viewBox（拡大表示） */

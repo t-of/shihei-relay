@@ -12,6 +12,10 @@ const FIREBASE_VERSION = '12.19.0';
 const CDN = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}`;
 
 const config = window.SHIHEI_FIREBASE_CONFIG || null;
+// みんなの地図の集計（agg/{id}。仕様「21」）の書き込みのスイッチ。既定は false（firebase-config.js を見よ）。
+// rules がまだ公開されていない本番でこれを true にすると、集計の書き込みが permission-denied になり、
+// 登録そのものが失敗する。ディレクターが rules を公開してから true にする。
+const AGG_ENABLED = !!window.SHIHEI_AGG_ENABLED;
 
 let fb = null;     // { app, auth, db, ...関数 }
 let readyPromise = null;
@@ -112,9 +116,6 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
     const n = entries.length + 1;
     const comeback = analysis.alreadyMine && !carried; // ここまで来たら confirmedReturn 済み・時間もあいている
 
-    const batch = s.writeBatch(db);
-    batch.set(s.doc(db, 'bills', key, 'sightings', docId), { muni: muniCode, at: s.serverTimestamp(), v: 1 });
-
     const userRef = s.doc(db, 'users', uid);
     const userSnap = await s.getDoc(userRef);
     const u = userSnap.exists() ? userSnap.data() : null;
@@ -124,12 +125,6 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
     const sinceLast = u?.last ? now - toMillis(u.last) : Infinity;
     if (sinceLast < 32 * 1000) return { ok: false, reason: 'rate-wait', waitSec: Math.ceil((32 * 1000 - sinceLast) / 1000) };
     if (sinceOk && (u.n || 0) >= 50) return { ok: false, reason: 'rate-day' };
-    batch.set(userRef, {
-      last: s.serverTimestamp(),
-      since: sinceOk ? u.since : s.serverTimestamp(),
-      n: sinceOk ? (u.n || 0) + 1 : 1,
-      v: 1,
-    });
 
     let km = 0, mins = 0;
     if (basis) {
@@ -137,16 +132,59 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
       if (a && b && distanceKm) km = distanceKm(a.lat, a.lng, b.lat, b.lng);
       mins = Math.max(0, Math.round((now - basis.at) / 60000));
     }
-    // 持ち歩いただけのときは、みんなの一致の記録（hits）には書かない
-    if (prev && !carried) {
-      const hitsRef = s.doc(s.collection(db, 'hits'));
-      batch.set(hitsRef, {
-        denom: Number(key.match(/\d+/)?.[0] || 0),
-        from: prev.muni, to: muniCode, km, mins, n, comeback,
-        at: s.serverTimestamp(), v: 1,
-      });
+
+    // みんなの地図の集計（仕様「21」）。typeId が分かる（= key が NOTE_TYPES にある形の）ときだけ、
+    // agg/all・今日の agg/d<年>-<月>-<日> の該当セルを +1 する。users に付ける b・s は、rules の
+    // isCountUp が「今回の新しい登録の分だけ」であることを確かめる手がかり（README の「## データ」）。
+    // 持ち歩き（carried）でも登録の回数として +1 する。hits には書かない。
+    const typeId = AGG_ENABLED ? Bill.parseKey(key)?.typeId : null;
+
+    // 1 つのバッチを組み立てて送る（dayId だけ差し替えられるように関数にしてある。0 時の前後の再送用）。
+    const commitBatch = (dayId) => {
+      const batch = s.writeBatch(db);
+      batch.set(s.doc(db, 'bills', key, 'sightings', docId), { muni: muniCode, at: s.serverTimestamp(), v: 1 });
+      const userDoc = {
+        last: s.serverTimestamp(),
+        since: sinceOk ? u.since : s.serverTimestamp(),
+        n: sinceOk ? (u.n || 0) + 1 : 1,
+        v: 1,
+      };
+      if (typeId) Object.assign(userDoc, { b: key, s: docId });
+      batch.set(userRef, userDoc);
+      // 持ち歩いただけのときは、みんなの一致の記録（hits）には書かない
+      if (prev && !carried) {
+        const hitsRef = s.doc(s.collection(db, 'hits'));
+        const hit = {
+          denom: Number(key.match(/\d+/)?.[0] || 0),
+          from: prev.muni, to: muniCode, km, mins, n, comeback,
+          at: s.serverTimestamp(), v: 1,
+        };
+        if (typeId) hit.ty = typeId;
+        batch.set(hitsRef, hit);
+      }
+      if (typeId) {
+        const cell = { m: { [muniCode]: { [typeId]: s.increment(1) } }, v: 1 };
+        batch.set(s.doc(db, 'agg', 'all'), cell, { merge: true });
+        batch.set(s.doc(db, 'agg', dayId), cell, { merge: true });
+      }
+      return batch.commit();
+    };
+
+    const dayId = Bill.jstDayId(now);
+    try {
+      await commitBatch(dayId);
+    } catch (e) {
+      // 日本時間 0 時の前後 10 分は、端末の時計と rules の request.time の日付がずれて agg の
+      // 書き込みだけ拒まれることがある（仕様「21-5」）。その間だけ、となりの日の id でもう 1 回だけ送る。
+      const minuteOfDay = Bill.jstMinuteOfDay(now);
+      const nearMidnight = minuteOfDay <= 10 || minuteOfDay >= 1440 - 10;
+      if (typeId && nearMidnight && String(e?.code) === 'permission-denied') {
+        const otherDay = Bill.jstDayId(now + (minuteOfDay <= 10 ? -1 : 1) * 86400000);
+        await commitBatch(otherDay);
+      } else {
+        throw e;
+      }
     }
-    await batch.commit();
 
     if (!basis) return { ok: true, first: true, comeback: false };
     if (carried) return { ok: true, first: false, comeback: false, carried: true, prevMuni: basis.muni, prevAt: basis.at, km, mins, n };
@@ -197,7 +235,7 @@ export async function deleteSighting(key) {
   }
 }
 
-/** みんなの画面: 最近の再発見 20 件（記番号を持たない） */
+/** みんなの画面: 最近の再発見 50 件（記番号を持たない）。期間・お札などの絞り込みは端末の中でする */
 export async function fetchRecentHits(limitN = 20) {
   const f = await ready();
   if (!f) return notConfigured();
@@ -211,10 +249,10 @@ export async function fetchRecentHits(limitN = 20) {
 }
 
 /**
- * みんなの画面の全体の数。「登録数」は、どのお札にも記番号を伏せてある関係で数える手段がない
- * （bills 全体の一覧を誰も読めない設計のため）ので、ここでは再発見数と最長の旅だけを返す。
- * ponytail: 登録の総数を出すには専用の counters ドキュメントと transaction が要る。使う人が
- * 増えてから、書き込みが増える広告版のタイミングで足す。
+ * みんなの画面の全体の数（再発見数・最長の旅）。登録の総数は、AGG_ENABLED のときは
+ * `fetchAgg(['all'])` の `m` を足せば出る（仕様「21」・js/bill.js の sumCells）ので、ここでは返さない。
+ * AGG_ENABLED が false の間（rules 公開前）は、登録の総数を出す手段がない
+ * （bills 全体の一覧を誰も読めない設計のため）。
  */
 export async function fetchGlobalStats() {
   const f = await ready();
@@ -230,6 +268,24 @@ export async function fetchGlobalStats() {
   }
 }
 
+/**
+ * みんなの地図（仕様「21」）: agg/{id} を並べて読む。`agg/all` 1 つ、期間が「今日」ならその日の
+ * 1 つ、「7 日間」なら過去 7 日分（js/bill.js の recentDayIds）。誰でも get できる（rules）。
+ * @param {string[]} ids 'all' や jstDayId() が返す 'd2026-9-27' のような id
+ * @returns {Promise<{ ok:true, mList: (object|null)[] } | { ok:false, reason:string }>}
+ */
+export async function fetchAgg(ids) {
+  const f = await ready();
+  if (!f) return notConfigured();
+  const { db, storeMod: s } = f;
+  try {
+    const docs = await Promise.all(ids.map((id) => s.getDoc(s.doc(db, 'agg', id))));
+    return { ok: true, mList: docs.map((d) => (d.exists() ? d.data().m : null)) };
+  } catch (e) {
+    return { ok: false, reason: String(e?.code || e) };
+  }
+}
+
 function toMillis(ts) {
   if (!ts) return 0;
   if (typeof ts === 'number') return ts;
@@ -239,4 +295,9 @@ function toMillis(ts) {
 
 export function isConfigured() {
   return !!config;
+}
+
+/** みんなの地図の集計（agg）を使ってよいか（rules がまだのうちは false。firebase-config.js を見よ） */
+export function isAggEnabled() {
+  return AGG_ENABLED;
 }

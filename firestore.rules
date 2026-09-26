@@ -63,6 +63,37 @@ service cloud.firestore {
       return exists(prevPath) && request.time - get(prevPath).data.at > duration.value(3, 'h');
     }
 
+    // ---- みんなの地図の集計（agg/{id}。仕様「21」） ----
+
+    // 日本時間（JST）の「今日」の agg 文書の id。0 を詰めない（js/bill.js の jstDayId と同じ）
+    function jstDayId() {
+      let t = request.time + duration.value(9, 'h');
+      return 'd' + string(t.year()) + '-' + string(t.month()) + '-' + string(t.day());
+    }
+    // 鍵の頭（号券+券種+色）から色を取った typeId。'F10000K-…' → 'F10000'（js/bill.js の NOTE_TYPES の id と同じ）
+    function typeOfKey(key) {
+      let h = key.split('-')[0];
+      return h[0:h.size() - 1];
+    }
+    // 集計を増やしてよいのは、同じバッチで新しい sighting を作ったとき（users/{uid} の b・s が指す
+    // sighting が、このバッチの前には無く・後にはある）だけ。増える市区町村・typeId・数もそこから決まる
+    // ので、「どこの・どの券種の登録数か」を偽って盛ることはできない。
+    function isCountUp() {
+      let u = getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      let sp = /databases/$(database)/documents/bills/$(u.b)/sightings/$(u.s);
+      let muni = getAfter(sp).data.muni;
+      let ty = typeOfKey(u.b);
+      let before = resource == null ? {} : resource.data.m;
+      let after = request.resource.data.m;
+      let cell0 = before.get(muni, {});
+      return signedIn() && withinRate(request.auth.uid)
+        && isOwnSightingDocId(u.s) && !exists(sp)
+        && request.resource.data.keys().hasOnly(['m', 'v']) && request.resource.data.v == 1
+        && after.diff(before).affectedKeys().hasOnly([muni])
+        && after[muni].diff(cell0).affectedKeys().hasOnly([ty])
+        && after[muni][ty] == cell0.get(ty, 0) + 1;
+    }
+
     match /bills/{key}/sightings/{docId} {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 100;
@@ -95,11 +126,11 @@ service cloud.firestore {
     // bills 自体・sightings のコレクショングループでの一覧検索はしない（拒否のまま）
 
     match /hits/{id} {
-      allow list: if request.query.limit <= 20;
+      allow list: if request.query.limit <= 50;
       allow get: if true;
 
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['denom', 'from', 'to', 'km', 'mins', 'n', 'at', 'v', 'comeback'])
+        && request.resource.data.keys().hasOnly(['denom', 'from', 'to', 'km', 'mins', 'n', 'at', 'v', 'comeback', 'ty'])
         && request.resource.data.denom in [50, 100, 500, 1000, 2000, 5000, 10000]
         && isMuniCode(request.resource.data.from)
         && isMuniCode(request.resource.data.to)
@@ -107,6 +138,10 @@ service cloud.firestore {
         && request.resource.data.mins is int && request.resource.data.mins >= 0
         && request.resource.data.n is int && request.resource.data.n >= 2 && request.resource.data.n <= 1000
         && (!('comeback' in request.resource.data) || request.resource.data.comeback is bool) // 前の版のアプリは comeback を送らない
+        // ty（号券+券種、仕様「21」）は無くてもよいが、あれば今回登録した鍵から取れる号券と同じであること
+        // （うその号券を付けて「みんなの地図」の絞り込みを偽れないように）
+        && (!('ty' in request.resource.data)
+            || request.resource.data.ty == typeOfKey(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.b))
         && request.resource.data.at == request.time
         && request.resource.data.v == 1
         && withinRate(request.auth.uid);
@@ -115,12 +150,25 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 市区町村ごとの登録の数（記番号は持たない）。1 つの文書に全市区町村をまとめる（agg/all と
+    // 日ごとの agg/d<年>-<月>-<日>）。書けるのは、同じバッチで新しい sighting を作ったときに、
+    // その市区町村・号券のセルをちょうど +1 するときだけ（isCountUp）。
+    match /agg/{id} {
+      allow get: if true;
+      allow create, update: if (id == 'all' || id == jstDayId()) && isCountUp();
+      allow list, delete: if false;
+    }
+
     match /users/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['last', 'since', 'n', 'v'])
+        && request.resource.data.keys().hasOnly(['last', 'since', 'n', 'v', 'b', 's'])
         && request.resource.data.last == request.time
-        && request.resource.data.v == 1;
+        && request.resource.data.v == 1
+        // b（今回登録した鍵）・s（今回の sighting の文書 id）は、みんなの地図の集計（agg）を
+        // 増やすときの手がかり。無くてもよい（前の版のアプリ・集計を使わない登録は送らない）
+        && (!('b' in request.resource.data) || isValidKey(request.resource.data.b))
+        && (!('s' in request.resource.data) || request.resource.data.s is string);
     }
   }
 }

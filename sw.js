@@ -8,7 +8,7 @@
 // keys.filter(k => k !== CACHE) のように書くと、ほかのアプリのキャッシュまで消してしまう。
 
 const PREFIX = 'shihei-relay-';
-const VERSION = 'v12';
+const VERSION = 'v13';
 const CACHE = `${PREFIX}${VERSION}`;
 const FONT_CACHE = `${PREFIX}fonts`;
 // 文字を読む部品（Tesseract の本体・作業用スクリプト・学習データ）は初めてカメラを使ったときだけ

@@ -107,7 +107,33 @@
         <button class="ghost" id="btn-spread-everyone">紙幣リレーを広める</button>
       </div>
       <div class="global-stats" id="global-stats"></div>
+
+      <div class="filter-row" id="ev-mode" role="group" aria-label="見え方">
+        <button type="button" data-mode="reg" aria-pressed="true">登録した場所</button>
+        <button type="button" data-mode="journeys" aria-pressed="false">再発見の旅</button>
+      </div>
+      <div class="filter-row" id="ev-period" role="group" aria-label="期間">
+        <button type="button" data-period="today" aria-pressed="false">今日</button>
+        <button type="button" data-period="7d" aria-pressed="false">7 日間</button>
+        <button type="button" data-period="all" aria-pressed="true">全部</button>
+      </div>
+      <div class="ev-filters">
+        <select id="ev-denom"></select>
+        <select id="ev-dist" hidden></select>
+        <select id="ev-kind" hidden></select>
+      </div>
+
+      <div class="map-host" id="everyone-map"></div>
+      <p id="ev-tap-info" hidden></p>
+      <p class="note" id="ev-legend">● 点が大きいほど、登録が多い</p>
+
+      <div class="hit-list" id="ev-top5"></div>
+      <p class="note" id="ev-empty" hidden></p>
+      <button class="ghost" id="btn-ev-reset" hidden>全部に戻す</button>
+
       <div class="hit-list" id="hit-list"></div>
+
+      <p class="note" id="ev-since" hidden></p>
     </section>
 
     <nav class="tabbar">
