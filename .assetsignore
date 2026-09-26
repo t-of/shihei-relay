@@ -8,3 +8,6 @@ tools
 README.md
 CLAUDE.md
 firestore.rules
+.gitignore
+.assetsignore
+wrangler.jsonc
