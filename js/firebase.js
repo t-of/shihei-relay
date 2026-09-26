@@ -69,12 +69,15 @@ async function init() {
  * 前にも自分（同じ uid）がこのお札を登録していたときは、まず `confirmedReturn` なしで呼ぶ。
  *   - `reason: 'too-soon'`      前の自分の登録から `Bill.RETURN_MIN_GAP_MS`（3 時間）経っていない。登録させない。
  *   - `reason: 'return-limit'` もう 4 件（n=0〜3）使い切っている。登録させない。
- *   - `reason: 'ask-return'`   「また手元に来ましたか？」を聞く。「戻ってきた」を選んだら
- *                              `confirmedReturn: true` でもう一度呼ぶ（間にほかの人がいてもいなくてもよい。
- *                              紙幣リレーを使っていない人の手を渡ってきたこともあるため）。
+ *   - `reason: 'ask-return'`   「今回は、前の登録からどう動きましたか？」を聞く。選んだ答えで
+ *                              `confirmedReturn` を付けてもう一度呼ぶ。
+ *     - `'carried'`  ずっと自分が持ち歩いていた。sightings には書くが、hits（みんなの一致の記録）には
+ *                     書かない・comeback にもしない（手を離れていないため）。
+ *     - `'returned'` 人の手を渡って戻ってきた（間にほかの人がいてもいなくてもよい。紙幣リレーを
+ *                     使っていない人の手を渡ってきたこともあるため）。今までの comeback と同じ扱い。
  *
- * @returns {Promise<{ ok:true, first:boolean, comeback:boolean, handsBetween?:number, loop?:{muni:string,at:number}[],
- *            prevMuni?:string, prevAt?:number, km?:number, mins?:number, n?:number }
+ * @returns {Promise<{ ok:true, first:boolean, comeback:boolean, carried?:boolean, handsBetween?:number,
+ *            loop?:{muni:string,at:number}[], prevMuni?:string, prevAt?:number, km?:number, mins?:number, n?:number }
  *          | { ok:false, reason:string, lastMuni?:string, lastAt?:number, sinceLastMs?:number }>}
  */
 export async function registerSighting(key, muniCode, { muniLatLng, distanceKm } = {}, confirmedReturn = false) {
@@ -102,8 +105,12 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
 
     const docId = Bill.sightingDocId(uid, analysis.nextN);
     const prev = entries.length ? entries[entries.length - 1] : null; // 直前の登録（自分でも他人でもよい）
+    const carried = confirmedReturn === 'carried';
+    // 持ち歩いていただけのときは、手が離れていないので「前の自分の登録」からの移動を見る
+    // （間に他人の登録があっても、ここでは無視する。ユーザーが選んだ答えをそのまま信じる）。
+    const basis = carried ? entries[analysis.lastMineIndex] : prev;
     const n = entries.length + 1;
-    const comeback = analysis.alreadyMine; // ここまで来たら confirmedReturn 済み・時間もあいている
+    const comeback = analysis.alreadyMine && !carried; // ここまで来たら confirmedReturn 済み・時間もあいている
 
     const batch = s.writeBatch(db);
     batch.set(s.doc(db, 'bills', key, 'sightings', docId), { muni: muniCode, at: s.serverTimestamp(), v: 1 });
@@ -112,6 +119,11 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
     const userSnap = await s.getDoc(userRef);
     const u = userSnap.exists() ? userSnap.data() : null;
     const sinceOk = u && now - toMillis(u.since) < 24 * 3600 * 1000;
+    // rules の withinRate（前回から 30 秒・24 時間で 50 回）に当たると permission-denied になるので、先に見て理由を返す。
+    // 端末の時計のずれに 2 秒の余裕を見る。
+    const sinceLast = u?.last ? now - toMillis(u.last) : Infinity;
+    if (sinceLast < 32 * 1000) return { ok: false, reason: 'rate-wait', waitSec: Math.ceil((32 * 1000 - sinceLast) / 1000) };
+    if (sinceOk && (u.n || 0) >= 50) return { ok: false, reason: 'rate-day' };
     batch.set(userRef, {
       last: s.serverTimestamp(),
       since: sinceOk ? u.since : s.serverTimestamp(),
@@ -120,10 +132,13 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
     });
 
     let km = 0, mins = 0;
-    if (prev) {
-      const a = muniLatLng?.(prev.muni), b = muniLatLng?.(muniCode);
+    if (basis) {
+      const a = muniLatLng?.(basis.muni), b = muniLatLng?.(muniCode);
       if (a && b && distanceKm) km = distanceKm(a.lat, a.lng, b.lat, b.lng);
-      mins = Math.max(0, Math.round((now - prev.at) / 60000));
+      mins = Math.max(0, Math.round((now - basis.at) / 60000));
+    }
+    // 持ち歩いただけのときは、みんなの一致の記録（hits）には書かない
+    if (prev && !carried) {
       const hitsRef = s.doc(s.collection(db, 'hits'));
       batch.set(hitsRef, {
         denom: Number(key.match(/\d+/)?.[0] || 0),
@@ -133,8 +148,9 @@ export async function registerSighting(key, muniCode, { muniLatLng, distanceKm }
     }
     await batch.commit();
 
-    if (!prev) return { ok: true, first: true, comeback: false };
-    const out = { ok: true, first: false, comeback, prevMuni: prev.muni, prevAt: prev.at, km, mins, n };
+    if (!basis) return { ok: true, first: true, comeback: false };
+    if (carried) return { ok: true, first: false, comeback: false, carried: true, prevMuni: basis.muni, prevAt: basis.at, km, mins, n };
+    const out = { ok: true, first: false, comeback, prevMuni: basis.muni, prevAt: basis.at, km, mins, n };
     if (comeback) {
       out.handsBetween = analysis.handsBetween;
       // 一周の線・合計距離用: 自分の前の登録から、今回までの市区町村の並び
@@ -161,7 +177,11 @@ export async function fetchJourney(key) {
   }
 }
 
-/** 自分の登録を消す */
+/**
+ * 自分がそのお札に登録したものを全部消す（最初の登録 {uid} と、戻ってきた・持ち歩いた登録 {uid}_1〜_3）。
+ * 存在しない文書を消しても Firestore はエラーにしない（rules の delete も isOwnSightingDocId で許可済み）ので、
+ * まとめて消してよい。hits（記番号を持たない、みんなの一致の記録）は消さない。
+ */
 export async function deleteSighting(key) {
   const f = await ready();
   if (!f) return notConfigured();
@@ -169,7 +189,8 @@ export async function deleteSighting(key) {
   const uid = auth.currentUser?.uid;
   if (!uid) return notConfigured('not-signed-in');
   try {
-    await s.deleteDoc(s.doc(db, 'bills', key, 'sightings', uid));
+    const docIds = [0, 1, 2, 3].map((n) => Bill.sightingDocId(uid, n));
+    await Promise.all(docIds.map((id) => s.deleteDoc(s.doc(db, 'bills', key, 'sightings', id))));
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: String(e?.code || e) };

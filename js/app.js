@@ -62,6 +62,8 @@ const state = {
   camStream: null,
   camLoop: null,
   lastResultKey: null,
+  journeyKey: null, // 「1 枚の道のり」で開いているお札の鍵（消すボタンに使う）
+  deleteTarget: null, // 消す確認シートに出している { key, from: 'result' | 'journey' }
   relayKey: null,
   flaggedIdx: [], // 撮影で読んで直した・あやしい文字の場所（確認画面で色を変えて出す）
   pending: null,  // 確認画面に出している { parsed, key }
@@ -100,7 +102,7 @@ function renderDenoms() {
   host.replaceChildren();
   for (const d of Bill.DENOMS) {
     const b = document.createElement('button');
-    b.textContent = DENOM_LABEL[d];
+    b.textContent = `${DENOM_LABEL[d]}札`;
     b.setAttribute('aria-pressed', String(!state.noteType && d === state.denom));
     b.addEventListener('click', () => {
       state.denom = d;
@@ -336,7 +338,10 @@ function openConfirmSheet(parsed) {
   const priorHost = $('confirm-prior');
   if (prior) {
     priorHost.hidden = false;
-    priorHost.textContent = `このお札は前に登録しています（${formatDateTime(prior.at)}・${muniLabel(prior.muni) || ''}）`;
+    priorHost.replaceChildren(
+      el('span', 'prior-note__title', '⚠ このお札は前に登録しています'),
+      el('span', 'prior-note__detail', `${formatDateTime(prior.at)}・${muniLabel(prior.muni) || ''}`),
+    );
   } else {
     priorHost.hidden = true;
   }
@@ -349,10 +354,14 @@ $('btn-confirm-ok').addEventListener('click', () => {
   if (state.pending) attemptRegister(state.pending.parsed, state.pending.key, false);
 });
 
-// 「また手元に来ましたか？」（前に自分が登録していたとき、サーバーに聞いて分かる）
-$('btn-return-yes').addEventListener('click', () => {
+// 前に自分が登録していたとき（サーバーに聞いて分かる）: 持ち歩いたか、人の手を渡って戻ってきたかを選ぶ
+$('btn-return-carried').addEventListener('click', () => {
   $('ask-return-sheet').hidden = true;
-  if (state.pending) attemptRegister(state.pending.parsed, state.pending.key, true);
+  if (state.pending) attemptRegister(state.pending.parsed, state.pending.key, 'carried');
+});
+$('btn-return-returned').addEventListener('click', () => {
+  $('ask-return-sheet').hidden = true;
+  if (state.pending) attemptRegister(state.pending.parsed, state.pending.key, 'returned');
 });
 $('btn-return-no').addEventListener('click', () => { $('ask-return-sheet').hidden = true; });
 
@@ -364,13 +373,17 @@ async function attemptRegister(parsed, key, confirmedReturn) {
   const res = await FB.registerSighting(key, state.muniCode, { muniLatLng, distanceKm: Bill.distanceKm }, confirmedReturn);
   if (!res.ok) {
     if (res.reason === 'ask-return') {
-      $('ask-return-text').textContent =
-        `このお札は前に登録しています（${formatDateTime(res.lastAt)}・${muniLabel(res.lastMuni) || ''}）。また手元に来ましたか？`;
+      $('ask-return-prior').textContent = `前回 ${formatDateTime(res.lastAt)}・${muniLabel(res.lastMuni) || ''} に登録しています`;
       $('ask-return-sheet').hidden = false;
     } else if (res.reason === 'too-soon') {
-      showText('前の登録からまだ時間がたっていません', `前回 ${formatDateTime(res.lastAt)}・${muniLabel(res.lastMuni) || ''} に登録しています。しばらくしてからもう一度お試しください。`);
+      showText('前の登録からまだ時間がたっていません', 'しばらくしてからもう一度お試しください。', `前回 ${formatDateTime(res.lastAt)}・${muniLabel(res.lastMuni) || ''} に登録しています`);
     } else if (res.reason === 'return-limit') {
       showText('登録できません', 'このお札はもう十分に登録されています。');
+    } else if (res.reason === 'rate-wait') {
+      toast(`続けて登録するときは 30 秒あけてください（あと ${res.waitSec} 秒）`);
+      sfx.error();
+    } else if (res.reason === 'rate-day') {
+      showText('今日はここまで', '登録は 24 時間で 50 枚までです。明日また登録してください。');
     } else if (res.reason === 'permission-denied') {
       toast('登録できませんでした（時間をおいて試してください）');
       sfx.error();
@@ -455,6 +468,17 @@ function showResult({ key, parsed, denom, noteType, muniCode, rareHits, feature,
       add('p', null, `${Bill.formatDuration(Date.now() - outcome.prevAt)}ぶりに戻ってきました`);
       add('p', 'muted', '紙幣リレーを使っていない人の手も渡ってきたのかもしれません。');
     }
+  } else if (outcome.carried) {
+    sfx.rediscoverArrive();
+    const dur = Bill.formatDuration(Date.now() - outcome.prevAt);
+    add('h2', null, '持ち歩いていました');
+    add('p', null, `${muniLabel(outcome.prevMuni)} → ${muniLabel(muniCode)}`);
+    const b = document.createElement('b');
+    b.textContent = `${dur}で ${outcome.km} km`;
+    const p = add('p', null, null);
+    p.appendChild(b);
+    p.append(' 移動しました');
+    add('p', 'muted', 'みんなとの一致の記録には残しません（ずっとあなたが持っていたため）。');
   } else if (outcome.first) {
     sfx.firstRegister();
     add('h2', null, '登録しました');
@@ -480,7 +504,7 @@ function showResult({ key, parsed, denom, noteType, muniCode, rareHits, feature,
       days: dur, km: outcome.km, n: outcome.n,
     };
   }
-  if (outcome.first || outcome.comeback) state.shareImageData = null;
+  if (outcome.first || outcome.comeback || outcome.carried) state.shareImageData = null;
   $('btn-share-image').hidden = !state.shareImageData;
   if (outcome.congested) add('p', 'muted', CONGESTION_TEXT_REGISTER + ' 自分の記録には残しました。');
   else if (outcome.offline) add('p', 'muted', '共有の記録はまだ準備中です（サーバーの設定待ち）。自分の記録には残しました。');
@@ -541,6 +565,9 @@ function closeResult() {
   $('result-view').dataset.ready = '';
   $('result-body').replaceChildren();
 }
+$('btn-delete-result').addEventListener('click', () => {
+  if (state.lastResultKey) openDeleteConfirm(state.lastResultKey, 'result');
+});
 $('btn-relay').addEventListener('click', () => {
   if (!state.lastResultKey) return;
   WebAppKit.share({ text: 'このお札、登録してつないでね（紙幣リレー）', url: `${APP_URL}#r=${encodeURIComponent(state.lastResultKey)}` });
@@ -650,6 +677,7 @@ async function shareResultImage(data) {
 // ---- 1 枚の道のり ----
 
 async function openJourney(key) {
+  state.journeyKey = key;
   $('journey-view').hidden = false;
   $('journey-list').textContent = '読み込み中…';
   const host = $('journey-map');
@@ -685,6 +713,53 @@ async function openJourney(key) {
   });
 }
 $('btn-journey-close').addEventListener('click', () => { $('journey-view').hidden = true; });
+$('btn-delete-journey').addEventListener('click', () => {
+  if (state.journeyKey) openDeleteConfirm(state.journeyKey, 'journey');
+});
+
+// ---- 登録を消す（まちがえたとき） ----
+//
+// 消すのは、自分がそのお札に登録したもの（sightings の {uid}・{uid}_1〜_3）だけ。
+// hits（記番号を持たない、みんなの一致の記録）は消さない（仕様どおり）。
+
+function openDeleteConfirm(key, from) {
+  state.deleteTarget = { key, from };
+  $('delete-sheet').hidden = false;
+}
+$('btn-delete-cancel').addEventListener('click', () => { $('delete-sheet').hidden = true; });
+$('btn-delete-confirm').addEventListener('click', async () => {
+  $('delete-sheet').hidden = true;
+  const target = state.deleteTarget;
+  if (!target) return;
+  const { key, from } = target;
+  if (!FB.isConfigured()) {
+    removeMineEntry(key);
+    toast('この端末の記録を消しました');
+    afterDelete(from);
+    return;
+  }
+  // ponytail: 電波が本当にないだけのときも「消せませんでした」に倒す（未設定かどうかだけ見分ける）。
+  const res = await FB.deleteSighting(key);
+  if (!res.ok) { toast('消せませんでした。時間をおいて試してください'); return; }
+  removeMineEntry(key);
+  toast('登録を消しました');
+  afterDelete(from);
+});
+function removeMineEntry(key) {
+  mine.bills = mine.bills.filter((b) => b.key !== key);
+  saveMine();
+}
+function afterDelete(from) {
+  if (from === 'result') {
+    closeResult();
+    state.buffer = '';
+    state.color = null;
+    renderSerial();
+  } else {
+    $('journey-view').hidden = true;
+    if (currentView() === 'mine') renderMine();
+  }
+}
 
 // ---- カメラ ----
 
@@ -741,7 +816,7 @@ function renderCamDenoms() {
   host.replaceChildren();
   for (const d of Bill.DENOMS) {
     const b = document.createElement('button');
-    b.textContent = DENOM_LABEL[d];
+    b.textContent = `${DENOM_LABEL[d]}札`;
     b.setAttribute('aria-pressed', String(!state.noteType && d === state.denom));
     b.addEventListener('click', () => { state.denom = d; state.noteType = null; renderCamDenoms(); sfx.choice(); });
     host.appendChild(b);
@@ -1088,8 +1163,12 @@ const CREDIT_TEXT = `市区町村の緯度経度・コード: 総務省・国土
 英語の学習データ: tessdata_fast（Apache License 2.0, tesseract-ocr）`;
 $('link-terms').addEventListener('click', (e) => { e.preventDefault(); showText('利用規約', TERMS_TEXT); });
 $('link-credit').addEventListener('click', (e) => { e.preventDefault(); showText('データと部品の出典', CREDIT_TEXT); });
-function showText(title, text) {
+/** 文面のシートを開く。callout があれば、本文の上に色つきで目立たせて出す（前回の登録の日時・場所など） */
+function showText(title, text, callout = null) {
   $('text-title').textContent = title;
+  const calloutHost = $('text-callout');
+  calloutHost.hidden = !callout;
+  if (callout) calloutHost.textContent = callout;
   $('text-body').textContent = text;
   $('text-sheet').hidden = false;
 }

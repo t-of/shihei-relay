@@ -409,10 +409,18 @@ a { color: inherit; }
 .place-candidates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .place-candidates li button { width: 100%; text-align: left; padding: 10px; border-radius: 8px; background: var(--bg); }
 .confirm-note { font-size: 12px; color: var(--muted); }
-.confirm-prior {
-  margin: 0; padding: 8px 10px; border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 13px;
+/* 前に登録済みだと、ひと目で分かるように（確認カード・戻りの確かめ・too-soon の案内で共通に使う） */
+.prior-note {
+  margin: 0; padding: 10px 12px; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-left: 4px solid var(--accent);
+  color: var(--fg); font-size: 13px; font-weight: 700;
+  display: flex; flex-direction: column; gap: 2px;
 }
+.prior-note__title { color: var(--accent); }
+.prior-note__detail { font-weight: 400; color: var(--fg); }
+.sheet__col { display: flex; flex-direction: column; gap: 8px; }
+.sheet__col button { padding: 12px; border-radius: 10px; text-align: center; min-height: 44px; }
 /* 確認画面の大きな記番号。直した・あやしい文字は色を変えたまま出す */
 .confirm-serial {
   display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
@@ -429,6 +437,8 @@ a { color: inherit; }
 .sheet__row .primary, .sheet__row .ghost { flex: 1; padding: 12px; border-radius: 10px; }
 .primary { background: var(--accent); color: var(--accent-fg); font-weight: 700; }
 .ghost { background: var(--tint); }
+/* 控えめな「消す」の入り口。押しつけがましくならないよう、他の操作より小さく・薄く出す */
+.text-link { padding: 8px; font-size: 12px; color: var(--muted); text-decoration: underline; }
 .text-body { font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---- 結果 ---- */

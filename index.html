@@ -157,7 +157,7 @@
   <div class="sheet" id="confirm-sheet" hidden>
     <div class="sheet__body">
       <h2>記番号を確かめてください</h2>
-      <p class="confirm-prior" id="confirm-prior" hidden></p>
+      <p class="prior-note" id="confirm-prior" hidden></p>
       <div class="confirm-serial" id="confirm-serial"></div>
       <p id="confirm-meta"></p>
       <p class="confirm-note">お札と見比べてください。登録した市区町村と日時は、このお札を手にした人に見えます。</p>
@@ -171,11 +171,13 @@
   <!-- ============ 前に登録していたとき ============ -->
   <div class="sheet" id="ask-return-sheet" hidden>
     <div class="sheet__body">
-      <h2>また手元に来ましたか？</h2>
-      <p id="ask-return-text"></p>
-      <div class="sheet__row">
-        <button class="ghost" id="btn-return-no">打ち間違い・同じ登録</button>
-        <button class="primary" id="btn-return-yes">戻ってきた</button>
+      <h2>このお札は登録済みです</h2>
+      <p class="prior-note" id="ask-return-prior"></p>
+      <p class="confirm-note">今回は、前の登録からどう動きましたか？</p>
+      <div class="sheet__col">
+        <button class="ghost" id="btn-return-carried">持ち歩いて移動した</button>
+        <button class="ghost" id="btn-return-returned">人の手を渡って戻ってきた</button>
+        <button class="ghost" id="btn-return-no">まちがえて同じお札を読んだ（登録しない）</button>
       </div>
     </div>
   </div>
@@ -197,6 +199,7 @@
       <button class="ghost" id="btn-share-image" hidden>旅を画像で共有</button>
       <button class="ghost" id="btn-journey">道のりを見る</button>
       <button class="ghost" id="btn-result-close">閉じる</button>
+      <button class="text-link" id="btn-delete-result">まちがえた？ この登録を消す</button>
     </div>
   </div>
 
@@ -205,6 +208,19 @@
     <button class="cam-close" id="btn-journey-close" aria-label="閉じる">✕</button>
     <div class="map-host" id="journey-map"></div>
     <div class="journey-list" id="journey-list"></div>
+    <button class="text-link" id="btn-delete-journey">このお札の記録を消す</button>
+  </div>
+
+  <!-- ============ 登録を消す確認 ============ -->
+  <div class="sheet" id="delete-sheet" hidden>
+    <div class="sheet__body">
+      <h2>この登録を消しますか？</h2>
+      <p class="confirm-note">あなたがこのお札に登録したものだけを消します（他の人の登録・みんなの一致の記録は残ります）。取り消せません。</p>
+      <div class="sheet__row">
+        <button class="ghost" id="btn-delete-cancel">やめる</button>
+        <button class="primary" id="btn-delete-confirm">消す</button>
+      </div>
+    </div>
   </div>
 
   <!-- ============ 設定 ============ -->
@@ -238,6 +254,7 @@
   <div class="sheet" id="text-sheet" hidden>
     <div class="sheet__body">
       <h2 id="text-title"></h2>
+      <p class="prior-note" id="text-callout" hidden></p>
       <div id="text-body" class="text-body"></div>
       <button class="sheet__close" id="btn-text-close">閉じる</button>
     </div>
