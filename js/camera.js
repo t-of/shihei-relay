@@ -39,6 +39,7 @@ export async function ensureWorker(onProgress) {
     }
     const w = await window.Tesseract.createWorker('eng', 1, {
       workerPath: `${VENDOR}/worker.min.js`,
+      workerBlobURL: false, // blob: のワーカーは CSP（worker-src 'self'）で止まり、準備中のまま進まなくなる
       corePath: VENDOR, // getCore.js がここから simd/relaxedsimd/非 simd の lstm 版を選ぶ
       langPath: VENDOR,
       cacheMethod: 'none', // 画像・言語データを IndexedDB に残さない（README・プライバシー方針どおり）
