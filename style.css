@@ -179,6 +179,14 @@ a { color: inherit; }
 
 /* ---- 自分の記録・みんな ---- */
 
+/* 再発見がまだ少ないうちに出す、広めようの呼びかけ（押しつけがましくしない） */
+.spread-banner {
+  background: var(--panel); border-radius: 10px; padding: 10px;
+  display: flex; flex-direction: column; gap: 8px; text-align: center;
+}
+.spread-banner p { margin: 0; font-size: 13px; color: var(--muted); }
+.spread-banner button { padding: 10px; border-radius: 8px; background: rgba(255, 211, 92, 0.14); color: var(--accent); font-weight: 700; }
+
 .summary, .global-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .summary .card, .global-stats .card {
   background: var(--panel); border-radius: 10px; padding: 10px; text-align: center;
@@ -298,7 +306,10 @@ a { color: inherit; }
 
 .overlay--result { justify-content: center; align-items: center; text-align: center; gap: 16px; }
 .result-actions { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; }
-.result-actions button { padding: 12px; border-radius: 10px; }
+.result-actions button { padding: 12px; border-radius: 10px; width: 100%; }
+/* リレー（このお札を渡す人へ）と、広める（友だちへ）を見出しで区別する */
+.share-group { display: flex; flex-direction: column; gap: 3px; }
+.share-hint { margin: 0; font-size: 11px; color: var(--muted); }
 
 /* ---- 設定 ---- */
 

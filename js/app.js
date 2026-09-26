@@ -38,6 +38,10 @@ setSoundOn(settings.sound);
 const APP_URL = 'https://shihei-relay.t-of.workers.dev/';
 const $ = (id) => document.getElementById(id);
 
+// 「紙幣リレーを広める」（アプリそのものの紹介）。押した回数などは記録しない。
+const SPREAD_TEXT = 'お札の記番号を登録して行方をたどるアプリ「紙幣リレー」。広まるほど、同じお札に出会えるようになります。';
+function spreadShare() { WebAppKit.share({ text: SPREAD_TEXT, url: APP_URL }); }
+
 // ---- 状態 ----
 
 let muniList = [];
@@ -312,6 +316,9 @@ function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }
     sfx.firstRegister();
     add('h2', null, '登録しました');
     add('p', null, `ここから旅が始まります — ${muniLabel(muniCode)}`);
+    if (!outcome.offline) {
+      add('p', 'muted', 'このお札は、まだあなただけの記録です。広まるほど、行方が見つかりやすくなります。');
+    }
   } else {
     sfx.rediscoverArrive();
     const dur = Bill.formatDuration(Date.now() - outcome.prevAt);
@@ -347,6 +354,10 @@ function showResult({ key, parsed, denom, muniCode, rareHits, feature, outcome }
     });
   }
 
+  // 一致がなかったとき（初めての登録）だけ、アプリを広める呼びかけを添える。押しつけがましく
+  // 毎回出さないよう、再発見のとき（すでに嬉しい結果があるとき）は出さない。
+  $('spread-group').hidden = !(outcome.first && !outcome.offline);
+
   $('result-view').hidden = false;
   const actions = document.querySelectorAll('.result-actions button');
   actions.forEach((b) => { b.disabled = true; });
@@ -369,6 +380,8 @@ $('btn-relay').addEventListener('click', () => {
   if (!state.lastResultKey) return;
   WebAppKit.share({ text: 'このお札、登録してつないでね（紙幣リレー）', url: `${APP_URL}#r=${encodeURIComponent(state.lastResultKey)}` });
 });
+$('btn-spread').addEventListener('click', spreadShare);
+$('btn-spread-everyone').addEventListener('click', spreadShare);
 $('btn-share-result').addEventListener('click', () => {
   const entry = mine.bills.find((b) => b.key === state.lastResultKey);
   if (!entry) return;
@@ -575,9 +588,13 @@ function statCard(label, val) {
 
 // ---- みんな ----
 
+// 再発見がこの件数を下回るうちは、「広める」の呼びかけをみんなの画面の上に出す。
+const SPREAD_THRESHOLD = 5;
+
 async function renderEveryone() {
   const statsHost = $('global-stats');
   if (!FB.isConfigured()) {
+    $('spread-banner').hidden = true;
     statsHost.replaceChildren(el('div', 'card', null));
     statsHost.firstChild.appendChild(el('span', null, '準備中です（サーバーの設定待ち）'));
     $('hit-list').replaceChildren();
@@ -591,6 +608,8 @@ async function renderEveryone() {
     statsHost.appendChild(statCard('再発見', `${stats.hitCount} 件`));
     statsHost.appendChild(statCard('最長の旅', `${stats.longestKm} km`));
   }
+  const few = stats.ok ? stats.hitCount < SPREAD_THRESHOLD : (hits.ok && hits.rows.length < SPREAD_THRESHOLD);
+  $('spread-banner').hidden = !few;
   const listHost = $('hit-list');
   listHost.replaceChildren();
   if (!hits.ok || hits.rows.length === 0) {

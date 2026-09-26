@@ -91,6 +91,10 @@
 
     <!-- ============ みんな ============ -->
     <section class="view" data-view="everyone" hidden>
+      <div class="spread-banner" id="spread-banner" hidden>
+        <p>はじまったばかりです。登録が増えるほど、同じお札に出会えます。</p>
+        <button class="ghost" id="btn-spread-everyone">紙幣リレーを広める</button>
+      </div>
       <div class="global-stats" id="global-stats"></div>
       <div class="hit-list" id="hit-list"></div>
     </section>
@@ -146,7 +150,14 @@
     <div class="result-body" id="result-body"></div>
     <div class="result-actions">
       <button class="primary" id="btn-again">もう 1 枚</button>
-      <button class="ghost" id="btn-relay">リレーのリンクを送る</button>
+      <div class="share-group">
+        <p class="share-hint">お札を渡す人へ</p>
+        <button class="ghost" id="btn-relay">リレーのリンクを送る</button>
+      </div>
+      <div class="share-group" id="spread-group" hidden>
+        <p class="share-hint">友だちへ</p>
+        <button class="ghost" id="btn-spread">紙幣リレーを広める</button>
+      </div>
       <button class="ghost" id="btn-share-result">共有</button>
       <button class="ghost" id="btn-journey">道のりを見る</button>
       <button class="ghost" id="btn-result-close">閉じる</button>
