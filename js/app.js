@@ -370,9 +370,12 @@ async function attemptRegister(parsed, key, confirmedReturn) {
       showText('前の登録からまだ時間がたっていません', `前回 ${formatDateTime(res.lastAt)}・${muniLabel(res.lastMuni) || ''} に登録しています。しばらくしてからもう一度お試しください。`);
     } else if (res.reason === 'return-limit') {
       showText('登録できません', 'このお札はもう十分に登録されています。');
-    } else {
+    } else if (res.reason === 'permission-denied') {
       toast('登録できませんでした（時間をおいて試してください）');
       sfx.error();
+    } else {
+      // resource-exhausted など: 混み合っているだけなので、登録は端末に残し、共有はあとで
+      finishRegister(parsed, key, { ok: true, first: true, comeback: false, offline: true, congested: true });
     }
     return;
   }
@@ -470,10 +473,12 @@ function showResult({ key, parsed, denom, noteType, muniCode, rareHits, feature,
     p.append(' 旅してきました');
     add('p', 'muted', `このお札を手にした ${outcome.n} 人目`);
   }
-  if (outcome.offline) add('p', 'muted', '共有の記録はまだ準備中です（サーバーの設定待ち）。自分の記録には残しました。');
+  if (outcome.congested) add('p', 'muted', CONGESTION_TEXT_REGISTER + ' 自分の記録には残しました。');
+  else if (outcome.offline) add('p', 'muted', '共有の記録はまだ準備中です（サーバーの設定待ち）。自分の記録には残しました。');
   if (rareHits.length) {
     sfx.rare();
     for (const r of rareHits) add('p', 'rare-hit', `✨ ${r.name}（${r.odds}）`);
+    add('p', 'muted', '珍しい番号でも、額面以上の価値は保証されません。');
     if (rareHits.some((r) => !dex.found[r.id])) sfx.dexComplete();
   } else if (feature && !outcome.comeback) {
     add('p', 'muted', feature);
@@ -876,6 +881,28 @@ function statCard(label, val) {
 // 再発見がこの件数を下回るうちは、「広める」の呼びかけをみんなの画面の上に出す。
 const SPREAD_THRESHOLD = 5;
 
+// 上限（resource-exhausted）や network の失敗のときの案内。permission-denied（形の不正など）は含めない。
+const CONGESTION_TEXT_REGISTER = '今日は登録が混み合っていて、みんなとの照合を止めています。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
+const CONGESTION_TEXT_VIEW = '今日はアクセスが混み合っていて、みんなの画面を止めています。日本時間の夕方（17 時ごろ）より後にもう一度お試しください。';
+const isCongested = (res) => !res.ok && res.reason !== 'permission-denied';
+
+// 「みんな」タブは開くたびに読み取りが多い（再発見数・最長の旅・最近 20 件で約 22 回）ので、
+// 5 分間は端末に取っておいた結果を使い回す（Firestore 無料枠を守るため）。
+const EVERYONE_CACHE_KEY = 'everyoneCache';
+const EVERYONE_CACHE_TTL_MS = 5 * 60 * 1000;
+function loadEveryoneCache() {
+  try {
+    const raw = sessionStorage.getItem(STORE + EVERYONE_CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    if (!c || Date.now() - c.at > EVERYONE_CACHE_TTL_MS) return null;
+    return c;
+  } catch { return null; }
+}
+function saveEveryoneCache(stats, hits) {
+  try { sessionStorage.setItem(STORE + EVERYONE_CACHE_KEY, JSON.stringify({ at: Date.now(), stats, hits })); } catch { /* 取っておけなくても遊べる */ }
+}
+
 async function renderEveryone() {
   const statsHost = $('global-stats');
   if (!FB.isConfigured()) {
@@ -887,17 +914,31 @@ async function renderEveryone() {
   }
   // stats.hitCount・longestKm、hits.rows の中身（h.from・h.to・h.km・h.mins）はすべて Firestore から来た値。
   // innerHTML に入れず、textContent で入れる（RULES.md §1 の推奨）。
-  const [stats, hits] = await Promise.all([FB.fetchGlobalStats(), FB.fetchRecentHits(20)]);
+  const cached = loadEveryoneCache();
+  let stats, hits;
+  if (cached) {
+    ({ stats, hits } = cached);
+  } else {
+    [stats, hits] = await Promise.all([FB.fetchGlobalStats(), FB.fetchRecentHits(20)]);
+    saveEveryoneCache(stats, hits);
+  }
   if (stats.ok) {
     statsHost.replaceChildren();
     statsHost.appendChild(statCard('再発見', `${stats.hitCount} 件`));
     statsHost.appendChild(statCard('最長の旅', `${stats.longestKm} km`));
+  } else if (isCongested(stats)) {
+    statsHost.replaceChildren(el('div', 'card', null));
+    statsHost.firstChild.appendChild(el('span', null, CONGESTION_TEXT_VIEW));
   }
   const few = stats.ok ? stats.hitCount < SPREAD_THRESHOLD : (hits.ok && hits.rows.length < SPREAD_THRESHOLD);
   $('spread-banner').hidden = !few;
   const listHost = $('hit-list');
   listHost.replaceChildren();
-  if (!hits.ok || hits.rows.length === 0) {
+  if (!hits.ok) {
+    if (isCongested(hits)) listHost.appendChild(el('p', 'muted', CONGESTION_TEXT_VIEW));
+    return;
+  }
+  if (hits.rows.length === 0) {
     listHost.appendChild(el('p', 'muted', 'まだ再発見はありません。リレーのリンクで最初の 1 本をつなごう'));
     return;
   }
@@ -927,8 +968,11 @@ const TERMS_TEXT = `紙幣リレーは無料で使えます。使うと、次の
 ・登録は、手元にある本物のお札だけにしてください。持っていないお札の記番号や、でたらめな場所を登録しないでください。
 ・お札に書き込んだり、傷つけたりしないでください。
 ・登録された場所や日時は、使う人が入れたものです。正しいとは限りません。
+・珍しい番号でも、額面以上の価値は保証されません。高く買い取ると持ちかける人や、警察・銀行を名乗ってお札の番号を聞く人には気をつけてください。
 ・いたずらと思われる登録は、知らせずに消すことがあります。
 ・アプリは予告なく変えたり、止めたりすることがあります。これで生じた損害の責任は負いかねます（法律で認められない場合を除きます）。
+・サービスを終えるときは、できるだけ前もってアプリの中で知らせ、送られた登録は消します。
+・未成年の方は、保護者の方と相談のうえで使ってください。
 ・今後、アプリの中に広告を出すことがあります。
 ・送る情報と見える範囲は「プライバシー」のページのとおりです。
 ・この規約を変えるときは、このアプリの中で知らせます。

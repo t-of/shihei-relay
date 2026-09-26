@@ -60,7 +60,12 @@ Firebase（Spark プラン・無料）を使う。`firebase-config.js` が `null
 3. **Firestore Database** を作成する。ロケーションは **`asia-northeast1`（東京）**、本番モードで開始する。
 4. 「アプリを追加」→ ウェブアプリを登録し、出てきた `firebaseConfig` の値を `firebase-config.js` の `window.SHIHEI_FIREBASE_CONFIG` にそのまま入れる（`apiKey` は公開してよい値。守りは `firestore.rules` 側）。
 5. Firestore の「ルール」タブに、このリポジトリの [`firestore.rules`](firestore.rules) の中身を貼り付けて **公開** する。**`firestore.rules` を直すたびに、ここへ貼り直して公開しないと本番に効かない。**
-6. 広告を入れる前に、App Check（reCAPTCHA）を有効にする（第 2 版）。
+6. **公開前に** App Check（reCAPTCHA v3）を有効にする（無料の Spark プランのまま、ボットによる読み取り連打から無料枠を守るため）。
+   1. [reCAPTCHA の管理画面](https://www.google.com/recaptcha/admin/create) で **v3** のキーを作る（ドメインに `t-of.github.io` を追加）。
+   2. Firebase コンソール → **App Check** → ウェブアプリを登録し、プロバイダを **reCAPTCHA v3**、上で作ったサイトキーを入れる。
+   3. 出てきたサイトキーを `firebase-config.js` の `appCheckSiteKey` に入れる。
+   4. 数日〜1 週間ほど「指標」タブで、正当なリクエストの割合を見る（低すぎると本物の利用者まで弾く）。
+   5. 割合が十分に高いことを確かめてから、Firestore・Authentication それぞれの App Check 設定を「モニタリングのみ」から **「適用」** に切り替える。
 
 エミュレーターは入れていない（Java と npm が要るため。RULES 同様、実装担当が本番のプロジェクトで
 手で確かめる）。公開後、次を手で確かめて結果をここに書き足すこと。

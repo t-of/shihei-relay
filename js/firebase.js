@@ -35,6 +35,17 @@ async function init() {
     import(`${CDN}/firebase-firestore.js`),
   ]);
   const app = initializeApp(config);
+
+  // App Check（reCAPTCHA v3）: サイトキーがあるときだけ、Firestore を使う前に有効にする。
+  // ボットによる読み取り連打から無料枠を守るためのもの（README の「Firebase の準備」）。
+  if (config.appCheckSiteKey) {
+    const { initializeAppCheck, ReCaptchaV3Provider } = await import(`${CDN}/firebase-app-check.js`);
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(config.appCheckSiteKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+  }
+
   const auth = authMod.getAuth(app);
   const db = storeMod.getFirestore(app);
 
