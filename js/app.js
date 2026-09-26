@@ -35,7 +35,7 @@ WebAppKit.init({ title: '紙幣リレー', text: 'お札の記番号と場所を
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 setSoundOn(settings.sound);
 
-const APP_URL = 'https://t-of.github.io/shihei-relay/';
+const APP_URL = 'https://shihei-relay.t-of.workers.dev/';
 const $ = (id) => document.getElementById(id);
 
 // ---- 状態 ----
