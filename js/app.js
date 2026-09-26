@@ -922,15 +922,23 @@ function openSettings() {
 $('opt-sound').addEventListener('change', (e) => { settings.sound = e.target.checked; setSoundOn(settings.sound); saveSettings(); });
 $('opt-input').addEventListener('change', (e) => { settings.input = e.target.value; saveSettings(); });
 
-const PRIVACY_TEXT = `カメラの映像は端末の中で文字を読むためだけに使い、送らず、残しません。
-写真はどこにも保存しません。
-登録した市区町村と日時は、そのお札の記番号を知っている人にだけ見えます。登録した人が誰かは分かりません。
-「みんな」の画面には記番号を出しません。`;
+const TERMS_TEXT = `紙幣リレーは無料で使えます。使うと、次のことに同意したものとします。
+
+・登録は、手元にある本物のお札だけにしてください。持っていないお札の記番号や、でたらめな場所を登録しないでください。
+・お札に書き込んだり、傷つけたりしないでください。
+・登録された場所や日時は、使う人が入れたものです。正しいとは限りません。
+・いたずらと思われる登録は、知らせずに消すことがあります。
+・アプリは予告なく変えたり、止めたりすることがあります。これで生じた損害の責任は負いかねます（法律で認められない場合を除きます）。
+・今後、アプリの中に広告を出すことがあります。
+・送る情報と見える範囲は「プライバシー」のページのとおりです。
+・この規約を変えるときは、このアプリの中で知らせます。
+
+問い合わせ: https://github.com/t-of/t-of.github.io/issues（誰でも読めるので、記番号やメールアドレスは書かないでください）`;
 const CREDIT_TEXT = `市区町村の緯度経度・コード: 総務省・国土交通省の公開データを含む jp-address-search（MIT License, uiuifree）
 日本の輪郭: Natural Earth（パブリックドメイン）
 文字を読む部品: Tesseract.js / tesseract.js-core（Apache License 2.0）
 英語の学習データ: tessdata_fast（Apache License 2.0, tesseract-ocr）`;
-$('link-privacy').addEventListener('click', (e) => { e.preventDefault(); showText('プライバシー', PRIVACY_TEXT); });
+$('link-terms').addEventListener('click', (e) => { e.preventDefault(); showText('利用規約', TERMS_TEXT); });
 $('link-credit').addEventListener('click', (e) => { e.preventDefault(); showText('データと部品の出典', CREDIT_TEXT); });
 function showText(title, text) {
   $('text-title').textContent = title;
