@@ -370,8 +370,8 @@ export function formatDuration(ms) {
   const days = Math.floor(mins / 1440);
   const hours = Math.floor((mins % 1440) / 60);
   const minsLeft = mins % 60;
-  if (days > 0) return `${days} 日と ${hours} 時間`;
-  if (hours > 0) return `${hours} 時間と ${minsLeft} 分`;
+  if (days > 0) return hours ? `${days} 日と ${hours} 時間` : `${days} 日`;
+  if (hours > 0) return minsLeft ? `${hours} 時間と ${minsLeft} 分` : `${hours} 時間`;
   return `${minsLeft} 分`;
 }
 

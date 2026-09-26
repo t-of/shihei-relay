@@ -169,6 +169,8 @@ test('時間の書式', () => {
   assert.equal(formatDuration(3 * 86400000 + 4 * 3600000), '3 日と 4 時間');
   assert.equal(formatDuration(2 * 3600000 + 5 * 60000), '2 時間と 5 分');
   assert.equal(formatDuration(42 * 60000), '42 分');
+  assert.equal(formatDuration(3 * 86400000), '3 日');
+  assert.equal(formatDuration(2 * 3600000), '2 時間');
 });
 
 // ---- 市区町村コード ----
