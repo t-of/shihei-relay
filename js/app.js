@@ -1055,9 +1055,8 @@ function statCard(label, val) {
 
 // ---- みんな（仕様「21」: 地図・絞り込み） ----
 
-// 集計（agg）を始めた日。まだ公開日が決まっていないための仮の値（ponytail）。
-// ディレクターが rules を公開してこの節を有効にする日に、実際の日付へ直す。
-const AGG_START_LABEL = '2026 年◯月◯日';
+// 集計（agg）を始めた日（rules を公開してスイッチを入れた日）
+const AGG_START_LABEL = '2026 年 9 月 27 日';
 
 // 再発見・登録がこの件数を下回るうちは、「広める」の呼びかけをみんなの画面の上に出す。
 const SPREAD_THRESHOLD = 5;

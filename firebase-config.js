@@ -24,7 +24,7 @@ window.SHIHEI_FIREBASE_CONFIG = {
 // firestore.rules に agg 用のルールがまだ公開されていない本番でこれを true にすると、
 // 集計の書き込みが permission-denied になり、登録そのものが失敗する。
 // ディレクターが新しい firestore.rules を Firebase コンソールで公開したあと、ここを true にして出す。
-window.SHIHEI_AGG_ENABLED = false;
+window.SHIHEI_AGG_ENABLED = true;
 
 // 例:
 // window.SHIHEI_FIREBASE_CONFIG = {
