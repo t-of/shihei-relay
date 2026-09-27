@@ -466,6 +466,8 @@ a { color: inherit; }
 
 .overlay--settings .row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .settings-links { font-size: 13px; }
+.data-io { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+.data-io .note { text-align: left; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom));

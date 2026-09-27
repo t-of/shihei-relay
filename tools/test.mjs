@@ -13,6 +13,7 @@ import {
   NOTE_TYPES, parseKey, RARE_RANK, compareBills,
   jstDayId, jstMinuteOfDay, recentDayIds, billFilterMatch, sumCells, muniBreakdown,
   hitMatchesBillFilter, hitWithinPeriod,
+  parseImportPayload, mergeBills, mergeDexFound, trimBills,
 } from '../js/bill.js';
 
 // ---- 形の正しい例・間違った例 ----
@@ -546,4 +547,53 @@ test('pickChars: 高さのそろった字だけ残し、枠に触れる模様・
   assert.equal(r.keep(3 * W + 110), false);
   assert.equal(r.keep(10 * W + 12), true);
   assert.equal(pickChars(new Uint8Array(W * H), W, H), null);
+});
+
+// ---- 端末をまたいだ記録の書き出し・読み込み ----
+
+test('parseImportPayload: app・v が違う／形が壊れているものは知らせるだけで何も直さない', () => {
+  assert.equal(parseImportPayload(null).ok, false);
+  assert.equal(parseImportPayload({ app: 'other-app', v: 1 }).ok, false);
+  assert.equal(parseImportPayload({ app: 'shihei-relay', v: 2 }).ok, false);
+});
+
+test('parseImportPayload: 壊れた・でたらめな key や欄は捨て、使える行だけ残す', () => {
+  const res = parseImportPayload({
+    app: 'shihei-relay', v: 1,
+    mine: { bills: [
+      { key: 'F10000K-AB123456CD', muni: '13101', at: 1000, seen: 2, km: 10, comebacks: 1, fav: true },
+      { key: 'AB123456CD', muni: '13101', at: 1000 },        // 号券・色が無い、壊れた鍵
+      { key: 'F10000K-AB123456CD', muni: '99999', at: 1000 }, // 市区町村コードが範囲外
+      { key: 'C10000K-A123456B', muni: '13101', at: 'oops' }, // at が数字でない
+      'not-an-object',
+    ] },
+    dex: { found: { zorome: 500, madeUp: 500, kaiki: 'oops' } },
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.mine.bills.length, 1);
+  assert.deepEqual(res.mine.bills[0], { key: 'F10000K-AB123456CD', muni: '13101', at: 1000, seen: 2, km: 10, comebacks: 1, fav: true });
+  assert.deepEqual(res.dex.found, { zorome: 500 }); // 知らない id・壊れた時刻は捨てる
+});
+
+test('mergeBills: 同じ key は seen/km/comebacks は大きい方、at は早い方、fav はどちらかにあれば付く', () => {
+  const local = [{ key: 'A', at: 2000, seen: 1, km: 5, comebacks: 0 }, { key: 'B', at: 100, seen: 1, km: 0, comebacks: 0, fav: true }];
+  const imported = [{ key: 'A', at: 1000, seen: 3, km: 2, comebacks: 1, fav: true }, { key: 'C', at: 500, seen: 1, km: 0, comebacks: 0 }];
+  const merged = mergeBills(local, imported);
+  assert.equal(merged.length, 3); // A は重ねる、B はそのまま、C は新規
+  const a = merged.find((b) => b.key === 'A');
+  assert.deepEqual(a, { key: 'A', at: 1000, seen: 3, km: 5, comebacks: 1, fav: true });
+});
+
+test('mergeDexFound: 同じ id は早い時刻の方を残す', () => {
+  assert.deepEqual(mergeDexFound({ zorome: 2000 }, { zorome: 1000, kaiki: 500 }), { zorome: 1000, kaiki: 500 });
+});
+
+test('trimBills: 1,000 件の上限。お気に入りは優先して残す', () => {
+  const bills = [];
+  for (let i = 0; i < 1002; i++) bills.push({ key: `k${i}`, at: i, fav: i < 1001 }); // 1 件だけお気に入りでない（k1001）
+  const out = trimBills(bills);
+  assert.equal(out.length, 1000);
+  assert.ok(!out.some((b) => b.key === 'k1001')); // お気に入りでないものが先に消える
+  assert.ok(!out.some((b) => b.key === 'k0')); // お気に入りだけで超えていたら、いちばん古いものが消える
+  assert.ok(out.some((b) => b.key === 'k1')); // 次に古いものは残る
 });

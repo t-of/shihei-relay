@@ -430,15 +430,8 @@ function upsertMine(key, muniCode, outcome) {
 }
 
 // 1,000 件を超えたら、お気に入りでない・いちばん古い（at が小さい）ものから消す（仕様「18-6」）。
-// お気に入りだけで 1,000 件あるときだけ、いちばん古いお気に入りを消す。
-function trimMine() {
-  while (mine.bills.length > 1000) {
-    let idx = -1, oldestAt = Infinity;
-    mine.bills.forEach((b, i) => { if (!b.fav && b.at < oldestAt) { idx = i; oldestAt = b.at; } });
-    if (idx === -1) mine.bills.forEach((b, i) => { if (b.at < oldestAt) { idx = i; oldestAt = b.at; } });
-    mine.bills.splice(idx, 1);
-  }
-}
+// 規則は Bill.trimBills（読み込みの足し合わせでも同じ規則を使う）。
+function trimMine() { mine.bills = Bill.trimBills(mine.bills); }
 
 // ---- 結果 ----
 
@@ -1318,6 +1311,53 @@ function openSettings() {
 $('opt-sound').addEventListener('change', (e) => { settings.sound = e.target.checked; setSoundOn(settings.sound); saveSettings(); });
 $('opt-input').addEventListener('change', (e) => { settings.input = e.target.value; saveSettings(); });
 $('opt-theme').addEventListener('change', (e) => { settings.theme = e.target.value; saveSettings(); applyTheme(settings.theme); });
+
+// ---- 記録の書き出し・読み込み（機種変更・アプリの入れ直し対策） ----
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function exportFileName() {
+  const d = new Date();
+  return `shihei-relay-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}.json`;
+}
+
+$('btn-export').addEventListener('click', async () => {
+  const payload = { app: 'shihei-relay', v: 1, exportedAt: Date.now(), mine, dex, settings };
+  const name = exportFileName();
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  // iOS のホーム画面アプリではダウンロードが効かないことがあるので、共有できるときは共有を先に使う
+  if (navigator.canShare) {
+    try {
+      const file = new File([blob], name, { type: 'application/json' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // キャンセルは何もしない
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$('btn-import').addEventListener('click', () => $('import-file').click());
+$('import-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let raw;
+  try { raw = JSON.parse(await file.text()); } catch { toast('ファイルを読めませんでした'); return; }
+  const res = Bill.parseImportPayload(raw);
+  if (!res.ok) { toast(res.reason); return; }
+  mine.bills = Bill.trimBills(Bill.mergeBills(mine.bills, res.mine.bills));
+  dex.found = Bill.mergeDexFound(dex.found, res.dex.found);
+  saveMine(); saveDex();
+  toast(`${res.mine.bills.length} 件読み込みました`);
+  if (currentView() === 'mine') renderMine();
+});
 
 const TERMS_TEXT = `紙幣リレーは無料で使えます。使うと、次のことに同意したものとします。
 

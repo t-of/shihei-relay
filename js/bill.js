@@ -537,3 +537,91 @@ export function hitWithinPeriod(atMs, period, nowMs = Date.now()) {
   if (period === '7d') return nowMs - atMs < 7 * 86400000;
   return true;
 }
+
+// ---- 端末をまたいだ記録の書き出し・読み込み（機種変更・アプリの入れ直し対策） ----
+
+const FINITE_NONNEG = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/**
+ * 書き出しファイル（JSON）を確かめて、使える形だけを取り出す。入力は信用しない。
+ * 合わなければ何も直さず { ok: false, reason } を返す（呼び出し側は端末のデータに触れない）。
+ * @returns {{ ok: true, mine: { bills: object[] }, dex: { found: object } } | { ok: false, reason: string }}
+ */
+export function parseImportPayload(raw) {
+  if (!raw || typeof raw !== 'object') return { ok: false, reason: 'ファイルの形が違います' };
+  if (raw.app !== 'shihei-relay') return { ok: false, reason: '紙幣リレーの書き出しファイルではありません' };
+  if (raw.v !== 1) return { ok: false, reason: '知らない版のファイルです' };
+
+  const rawBills = Array.isArray(raw.mine?.bills) ? raw.mine.bills : [];
+  const bills = [];
+  for (const b of rawBills) {
+    if (!b || typeof b !== 'object') continue;
+    if (typeof b.key !== 'string' || !parseKey(b.key)) continue; // 号券・色・記番号の形が合う鍵だけ
+    if (typeof b.muni !== 'string' || !isMuniCode(b.muni)) continue;
+    if (!FINITE_NONNEG(b.at)) continue;
+    bills.push({
+      key: b.key,
+      muni: b.muni,
+      at: b.at,
+      seen: FINITE_NONNEG(b.seen) ? b.seen : 1,
+      km: FINITE_NONNEG(b.km) ? b.km : 0,
+      comebacks: FINITE_NONNEG(b.comebacks) ? b.comebacks : 0,
+      ...(b.fav === true ? { fav: true } : {}),
+    });
+  }
+
+  const foundIds = new Set([...RARE_IDS, 'kaiki', 'mukashi']);
+  const rawFound = raw.dex?.found;
+  const found = {};
+  if (rawFound && typeof rawFound === 'object') {
+    for (const [id, at] of Object.entries(rawFound)) {
+      if (foundIds.has(id) && FINITE_NONNEG(at)) found[id] = at;
+    }
+  }
+
+  return { ok: true, mine: { bills }, dex: { found } };
+}
+
+/**
+ * 自分の記録（bills）を、今の端末のものに読み込んだものを足し合わせる（上書きしない）。
+ * 同じ key は: seen・km・comebacks は大きい方、at は早い方（旅の始まりを残す）、fav はどちらかにあれば付ける。
+ * @returns {object[]} 足し合わせた bills（トリムはしていない。呼び出し側で trimBills を通す）
+ */
+export function mergeBills(localBills, importedBills) {
+  const byKey = new Map(localBills.map((b) => [b.key, { ...b }]));
+  for (const ib of importedBills) {
+    const cur = byKey.get(ib.key);
+    if (!cur) { byKey.set(ib.key, { ...ib }); continue; }
+    cur.at = Math.min(cur.at, ib.at);
+    cur.seen = Math.max(cur.seen || 1, ib.seen || 1);
+    cur.km = Math.max(cur.km || 0, ib.km || 0);
+    cur.comebacks = Math.max(cur.comebacks || 0, ib.comebacks || 0);
+    if (ib.fav) cur.fav = true;
+  }
+  return [...byKey.values()];
+}
+
+/** レア番号の図鑑（found）を足し合わせる。同じ id は早い時刻の方を残す */
+export function mergeDexFound(localFound, importedFound) {
+  const out = { ...localFound };
+  for (const [id, at] of Object.entries(importedFound)) {
+    out[id] = out[id] == null ? at : Math.min(out[id], at);
+  }
+  return out;
+}
+
+/**
+ * 1,000 件を超えたら、お気に入りでない・いちばん古い（at が小さい）ものから消す（仕様「18-6」）。
+ * お気に入りだけで 1,000 件あるときだけ、いちばん古いお気に入りを消す。upsertMine のトリムと同じ規則を
+ * 純粋関数にしたもの（読み込みで足し合わせたあとにも同じ規則で切り詰める）。
+ */
+export function trimBills(bills, max = 1000) {
+  const out = [...bills];
+  while (out.length > max) {
+    let idx = -1, oldestAt = Infinity;
+    out.forEach((b, i) => { if (!b.fav && b.at < oldestAt) { idx = i; oldestAt = b.at; } });
+    if (idx === -1) out.forEach((b, i) => { if (b.at < oldestAt) { idx = i; oldestAt = b.at; } });
+    out.splice(idx, 1);
+  }
+  return out;
+}

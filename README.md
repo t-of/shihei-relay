@@ -141,6 +141,33 @@ Service Worker のキャッシュ（`shihei-relay-ocr-v1`）から読むので�
 読み書きは try/catch で囲む。写真は保存しない（localStorage にも IndexedDB にも入れない）。
 文字を読む部品は Service Worker のキャッシュ `shihei-relay-ocr-v1` に入る（2 回目からは読み込まない）。
 
+#### 端末をまたいだ記録の書き出し・読み込み（機種変更・アプリの入れ直し対策）
+
+設定画面「記録を書き出す」で、上の 3 つのキー（`mine`・`dex`・`settings`）を 1 つの JSON ファイルに
+まとめて書き出せる。ファイル名は `shihei-relay-YYYYMMDD.json`。
+
+```json
+{ "app": "shihei-relay", "v": 1, "exportedAt": 1790000000000, "mine": { "v": 1, "bills": [...] }, "dex": { "v": 1, "found": {...} }, "settings": {...} }
+```
+
+iOS のホーム画面アプリではダウンロードが効かないことがあるため、`navigator.canShare({ files })` が
+使えるときは共有シートを、使えなければ `<a download>` でのファイル保存を使う。
+
+「記録を読み込む」で選んだファイルは、**今の端末のデータを上書きせず足し合わせる**（`js/bill.js` の
+`parseImportPayload`・`mergeBills`・`mergeDexFound`。node --test で確認済み）。
+
+- 読み込む前に、ファイルの形（`app` が `shihei-relay`・`v` が知っている値）と、`bills` の各行（`key` が
+  `parseKey` を通る・`muni` が `isMuniCode` を通る・`at` が数）を確かめる。合わない行・ファイルは黙って
+  捨て、形自体が違えば何も変えずにトーストで知らせる。
+- `mine.bills`: 同じ `key` は、`seen`・`km`・`comebacks` は大きい方、`at` は早い方（旅の始まりを残す）、
+  `fav` はどちらかに付いていれば付ける。足し合わせたあとも 1,000 件の上限とお気に入りの優先は
+  変わらない（`trimBills`）。
+- `dex.found`: 同じ図鑑の枠は早い時刻の方を残す。
+- `settings`: 読み込まない（今の端末の設定をそのまま使う）。
+
+サーバー（Firestore）側の登録は引き継げない。匿名 id は端末ごとに違うため、前の端末で登録した
+`sightings` を新しい端末から消すことはできない（自分の記録・図鑑は上のとおり引き継げる）。
+
 一覧（自分の記録の「記録を見る」）は別画面にせず、券種ごとにまとめて開閉し、しぼり込み（すべて／お気に入り／レア）・
 並び替え（新しい順・古い順・番号順・レア順・距離の長い順）・お気に入りの★ができる。Firestore には聞きに行かず、
 端末の `mine` だけで描くので圏外でも出る（`js/bill.js` の `parseKey`・`compareBills`・`RARE_RANK`）。
