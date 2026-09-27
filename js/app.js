@@ -876,6 +876,11 @@ function switchTab(tab) {
 
 let mineListOpen = false;
 
+// レア番号の種類での絞り込み（21-9 で決めた 4 種類。選択は保存しない・ページを開いている間だけ覚える）
+const RARE_TYPE_IDS = ['zorome', 'kiriban', 'kaidan', 'wakai'];
+const RARE_TYPE_NAMES = { zorome: 'ゾロ目', kiriban: 'キリ番', kaidan: '階段', wakai: '若い番号' };
+let rareTypeFilter = 'all';
+
 function billRareHits(b) {
   const p = Bill.parseKey(b.key);
   return p ? Bill.rareChecks(p.digits, { series: p.series, prefix: p.prefix, suffix: p.suffix }) : [];
@@ -953,21 +958,44 @@ function renderMineList() {
     const b = document.createElement('button');
     b.textContent = label;
     b.setAttribute('aria-pressed', String(settings.listFilter === id));
-    b.addEventListener('click', () => { settings.listFilter = id; saveSettings(); sfx.choice(); renderMineList(); });
+    b.addEventListener('click', () => {
+      settings.listFilter = id;
+      if (id !== 'rare') rareTypeFilter = 'all'; // レア以外に切り替えたら、種類の絞り込みも戻す
+      saveSettings(); sfx.choice(); renderMineList();
+    });
     filterHost.appendChild(b);
+  }
+
+  const rareTypeHost = $('mine-rare-types');
+  rareTypeHost.replaceChildren();
+  rareTypeHost.hidden = settings.listFilter !== 'rare';
+  if (settings.listFilter === 'rare') {
+    for (const [id, name] of [['all', 'すべて'], ...RARE_TYPE_IDS.map((id) => [id, RARE_TYPE_NAMES[id]])]) {
+      const count = id === 'all' ? rareCount : mine.bills.filter((b) => billRareHits(b).some((r) => r.id === id)).length;
+      const b = document.createElement('button');
+      b.textContent = `${name} ${count}`;
+      b.setAttribute('aria-pressed', String(rareTypeFilter === id));
+      b.addEventListener('click', () => { rareTypeFilter = id; sfx.choice(); renderMineList(); });
+      rareTypeHost.appendChild(b);
+    }
   }
 
   $('mine-sort').value = settings.listSort;
 
   let list = mine.bills;
   if (settings.listFilter === 'fav') list = list.filter((b) => b.fav);
-  else if (settings.listFilter === 'rare') list = list.filter((b) => billRareHits(b).length > 0);
+  else if (settings.listFilter === 'rare') {
+    list = list.filter((b) => billRareHits(b).length > 0);
+    if (rareTypeFilter !== 'all') list = list.filter((b) => billRareHits(b).some((r) => r.id === rareTypeFilter));
+  }
 
   const groupsHost = $('mine-groups');
   groupsHost.replaceChildren();
   if (list.length === 0) {
     const msg = settings.listFilter === 'fav' ? '★ を押したお札が、ここに集まります'
-      : settings.listFilter === 'rare' ? 'レア番号のお札はまだありません' : 'まだ登録したお札はありません';
+      : settings.listFilter === 'rare'
+        ? (rareTypeFilter === 'all' ? 'レア番号のお札はまだありません' : `「${RARE_TYPE_NAMES[rareTypeFilter]}」のお札はまだありません`)
+        : 'まだ登録したお札はありません';
     groupsHost.appendChild(el('p', 'muted', msg));
     return;
   }
