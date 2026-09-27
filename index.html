@@ -108,6 +108,10 @@
       </div>
       <div class="global-stats" id="global-stats"></div>
 
+      <p class="note">地図は、登録が増えるまでお休みしています。</p>
+
+      <!-- 地図・並びは一旦隠す（始めたばかりで偏りが出るため。記録は今までどおり集める）。戻すときは hidden を外し、js/app.js の EV_MAP_HIDDEN を false に -->
+      <div id="ev-map-area" hidden>
       <div class="filter-row" id="ev-mode" role="group" aria-label="見え方">
         <button type="button" data-mode="reg" aria-pressed="true">登録した場所</button>
         <button type="button" data-mode="journeys" aria-pressed="false">再発見の旅</button>
@@ -134,6 +138,7 @@
       <div class="hit-list" id="hit-list"></div>
 
       <p class="note" id="ev-since" hidden></p>
+      </div>
     </section>
 
     <nav class="tabbar">

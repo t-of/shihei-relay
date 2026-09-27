@@ -1185,7 +1185,11 @@ async function renderEveryone() {
 }
 
 /** 地図・下の並びだけを描き直す（見え方・期間・絞り込みを変えたとき。読み取りは agg のキャッシュ任せ） */
+// 地図・並びを一旦隠す（index.html の ev-map-area と合わせる）。記録の書き込み（agg・hits）は止めない
+const EV_MAP_HIDDEN = true;
+
 async function renderEveryoneBody() {
+  if (EV_MAP_HIDDEN) return;
   const host = $('everyone-map');
   const svg = await Map.mountMap(host);
   Map.clearMarks(svg);
